@@ -1,0 +1,287 @@
+---
+title: "Views"
+description: "How Action View renders ERB templates, partials, and layouts to produce HTML responses."
+---
+
+Action View is the V in Model-View-Controller. Action Controller fetches data and Action View is responsible for rendering a response body to the web request using that data.
+
+By default, Action View templates are written using Embedded Ruby (ERB), which allows Ruby code within HTML documents. Action View also provides helpers for generating HTML tags for forms, dates, strings, and more.
+
+<CardGroup cols={2}>
+  <Card title="Templates" icon="file-code">
+    ERB, Jbuilder, and Builder templates for HTML, JSON, and XML responses.
+  </Card>
+  <Card title="Partials" icon="puzzle-piece">
+    Reusable template fragments that can accept local variables.
+  </Card>
+  <Card title="Layouts" icon="table-columns">
+    Wrapper templates that surround action views with common structure.
+  </Card>
+  <Card title="Helpers" icon="wand-magic-sparkles">
+    Built-in methods for forms, URLs, assets, formatting, and more.
+  </Card>
+</CardGroup>
+
+## Template formats
+
+Action View templates are stored in `app/views`, in subdirectories matching each controller name. Rails uses file extensions to determine which template engine to use.
+
+<Tabs>
+  <Tab title="ERB (.html.erb)">
+    ERB templates embed Ruby code within HTML using `<% %>` and `<%= %>` tags.
+
+    - `<% %>` — executes Ruby without output (conditions, loops)
+    - `<%= %>` — executes Ruby and outputs the result
+
+    ```erb
+    <h1>Names</h1>
+    <% @people.each do |person| %>
+      Name: <%= person.name %><br>
+    <% end %>
+    ```
+
+    Use `<%# %>` for comments that do not render:
+
+    ```erb
+    <%# This is a comment and will not appear in the output %>
+    ```
+
+    Use `<%-` and `-%>` to suppress leading and trailing whitespace.
+  </Tab>
+  <Tab title="Jbuilder (.json.jbuilder)">
+    Jbuilder is a gem maintained by the Rails team and included in the default `Gemfile`. It builds JSON responses using templates.
+
+    ```ruby
+    json.name("Alex")
+    json.email("alex@example.com")
+    ```
+
+    Produces:
+
+    ```json
+    {
+      "name": "Alex",
+      "email": "alex@example.com"
+    }
+    ```
+  </Tab>
+  <Tab title="Builder (.xml.builder)">
+    Builder templates build XML responses programmatically. An `XmlMarkup` object named `xml` is automatically available.
+
+    ```ruby
+    xml.em("emphasized")
+    xml.a("A Link", "href" => "https://rubyonrails.org")
+    xml.div {
+      xml.h1(@person.name)
+      xml.p(@person.bio)
+    }
+    ```
+  </Tab>
+</Tabs>
+
+When you use scaffolding to generate an `article` resource, Rails generates the following view files in `app/views/articles`:
+
+```bash
+$ bin/rails generate scaffold article
+      create      app/views/articles/index.html.erb
+      create      app/views/articles/edit.html.erb
+      create      app/views/articles/show.html.erb
+      create      app/views/articles/new.html.erb
+      create      app/views/articles/_form.html.erb
+```
+
+By following this naming convention, Rails automatically finds and renders the matching view at the end of a controller action without you having to specify it.
+
+## Partials
+
+Partial templates — usually called "partials" — break view templates into smaller, reusable chunks. Partial file names begin with an underscore by convention, but are referenced without the underscore when rendering.
+
+### Rendering a partial
+
+```erb
+<%= render "product" %>
+```
+
+This looks for `_product.html.erb` in the same directory. To reference a partial from another directory:
+
+```erb
+<%= render "application/product" %>
+```
+
+### Passing data to partials
+
+Pass local variables using the `locals:` option:
+
+```erb
+<%# app/views/products/show.html.erb %>
+<%= render partial: "product", locals: { my_product: @product } %>
+
+<%# app/views/products/_product.html.erb %>
+<%= tag.div id: dom_id(my_product) do %>
+  <h1><%= my_product.name %></h1>
+<% end %>
+```
+
+You can also use the shorthand form when the variable name matches the partial name:
+
+```erb
+<%= render "product", product: @product %>
+```
+
+Or use the convention-based shorthand with a model instance:
+
+```erb
+<%= render @product %>
+```
+
+This looks for `_product.html.erb` in `app/views/products/` and passes `@product` as a local variable named `product`.
+
+### Rendering collections
+
+Render a partial for each element in a collection with a single method call:
+
+```erb
+<%= render partial: "product", collection: @products %>
+```
+
+Or using the convention-based shorthand:
+
+```erb
+<%= render @products %>
+```
+
+Rails determines the partial name from the model name in the collection. When rendering a collection, each partial has access to a counter variable named after the partial followed by `_counter` (e.g. `product_counter`), starting at `0`.
+
+### Strict locals
+
+Define the expected locals signature at the top of a partial to improve performance and catch errors early:
+
+```erb
+<%# locals: (message:) -%>
+<%= message %>
+```
+
+This makes `message` a required local. With a default:
+
+```erb
+<%# locals: (message: "Hello, world!") -%>
+<%= message %>
+```
+
+Rendering the partial without `message` uses the default. Passing an unknown local raises an error.
+
+### `local_assigns`
+
+Each partial has a `local_assigns` method to safely check for optional variables:
+
+```erb
+<% if local_assigns[:redirect] %>
+  <%= form.hidden_field :redirect, value: true %>
+<% end %>
+```
+
+Use `fetch` to provide a default when a key is not passed:
+
+```erb
+<% local_assigns.fetch(:related_products, []).each do |related_product| %>
+  <%# ... %>
+<% end %>
+```
+
+## Layouts
+
+Layouts render a common view template around controller actions. Rails looks for a layout in `app/views/layouts` with the same base name as the controller, falling back to `app/views/layouts/application.html.erb`.
+
+A typical `application.html.erb` layout:
+
+```erb
+<!DOCTYPE html>
+<html>
+<head>
+  <title><%= "Your Rails App" %></title>
+  <%= csrf_meta_tags %>
+  <%= csp_meta_tag %>
+  <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
+  <%= javascript_importmap_tags %>
+</head>
+<body>
+
+<nav>
+  <ul>
+    <li><%= link_to "Home", root_path %></li>
+    <li><%= link_to "Products", products_path %></li>
+  </ul>
+</nav>
+
+<%= yield %>
+
+<footer>
+  <p>&copy; <%= Date.current.year %> Your Company</p>
+</footer>
+</body>
+</html>
+```
+
+The view content is rendered in place of `<%= yield %>`, surrounded by the common `<head>`, `<nav>`, and `<footer>` content.
+
+### Partial layouts
+
+Partials can have their own layouts. The layout file also starts with an underscore:
+
+```erb
+<%# app/views/articles/show.html.erb %>
+<%= render partial: 'article', layout: 'box', locals: { article: @article } %>
+
+<%# app/views/articles/_box.html.erb %>
+<div class="box">
+  <%= yield %>
+</div>
+```
+
+## Helpers
+
+Rails provides many built-in helper methods available in Action View for:
+
+- Formatting dates, strings, and numbers
+- Creating HTML links to images, videos, stylesheets, and other assets
+- Sanitizing content
+- Creating forms
+- Localizing content
+
+<AccordionGroup>
+  <Accordion title="URL helpers">
+    Use route helpers generated by the router to build links without hard-coding paths:
+
+    ```erb
+    <%= link_to "Edit Ad", [:edit, @magazine, @ad] %>
+    <%= link_to 'User Record', user_path(@user) %>
+    ```
+  </Accordion>
+  <Accordion title="Form helpers">
+    The `form_with` helper builds HTML forms tied to a model:
+
+    ```erb
+    <%= form_with model: @article do |form| %>
+      <%= form.text_field :title %>
+      <%= form.text_area :body %>
+      <%= form.submit %>
+    <% end %>
+    ```
+  </Accordion>
+  <Accordion title="Asset tag helpers">
+    Generate HTML tags for stylesheets, JavaScript, and images:
+
+    ```erb
+    <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
+    <%= javascript_importmap_tags %>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Localized views
+
+Action View renders different templates depending on the current locale. Set `I18n.locale = :de` and Action View will try to render `app/views/articles/show.de.html.erb` before falling back to `show.html.erb`.
+
+<Tip>
+You can apply the same technique to localize error pages in the `public` directory. For example, `public/500.de.html` provides a German version of the 500 error page.
+</Tip>

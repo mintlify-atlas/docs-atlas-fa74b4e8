@@ -1,0 +1,454 @@
+---
+title: "Active Record Associations"
+description: "Define relationships between models using belongs_to, has_one, has_many, and more."
+---
+
+Active Record associations let you declare relationships between models using macro-style calls. These declarations tell Rails how models relate to each other and add useful methods to your models for working with related data.
+
+When you set up an association, Rails manages the Primary Key and Foreign Key relationships between the two models. For example, without associations you must manage foreign keys manually:
+
+```ruby
+# Without associations — manual and error-prone
+@book = Book.create(author_id: @author.id, published_at: Time.now)
+
+@books = Book.where(author_id: @author.id)
+@books.each { |book| book.destroy }
+@author.destroy
+```
+
+With associations this becomes:
+
+```ruby
+# With associations — clean and expressive
+class Author < ApplicationRecord
+  has_many :books, dependent: :destroy
+end
+
+class Book < ApplicationRecord
+  belongs_to :author
+end
+
+@book = @author.books.create(published_at: Time.now)
+@author.destroy  # also destroys all books
+```
+
+## Association types
+
+Rails supports six association types:
+
+<CardGroup cols={2}>
+  <Card title="belongs_to" icon="arrow-right">
+    The current model's table contains a foreign key referencing another model. Creates a one-to-one or many-to-one relationship from this model's perspective.
+  </Card>
+  <Card title="has_one" icon="arrow-left">
+    The other model's table contains a foreign key. The current model owns one instance of the other model.
+  </Card>
+  <Card title="has_many" icon="list">
+    The other model's table contains a foreign key. The current model can have zero or more instances of the other model.
+  </Card>
+  <Card title="has_many :through" icon="arrow-right-arrow-left">
+    A many-to-many relationship using an intermediate join model. Allows callbacks, validations, and extra attributes on the join.
+  </Card>
+  <Card title="has_one :through" icon="route">
+    A one-to-one relationship through an intermediary model.
+  </Card>
+  <Card title="has_and_belongs_to_many" icon="arrows-left-right">
+    A direct many-to-many relationship with no intervening model. Requires a join table with no primary key.
+  </Card>
+</CardGroup>
+
+## `belongs_to`
+
+Sets up a many-to-one relationship where the declaring model's table contains a foreign key.
+
+```ruby
+class Book < ApplicationRecord
+  belongs_to :author
+end
+```
+
+<Note>
+`belongs_to` must use the singular form. `belongs_to :authors` would cause Rails to look for an `Authors` class.
+</Note>
+
+The corresponding migration:
+
+```ruby
+class CreateBooks < ActiveRecord::Migration[8.2]
+  def change
+    create_table :books do |t|
+      t.belongs_to :author
+      t.datetime :published_at
+      t.timestamps
+    end
+  end
+end
+```
+
+By default, `belongs_to` validates that the associated record exists. To make the association optional:
+
+```ruby
+class Book < ApplicationRecord
+  belongs_to :author, optional: true
+end
+```
+
+### Methods added by `belongs_to`
+
+Given `belongs_to :author`, an instance of `Book` gains:
+
+| Method | Description |
+|--------|-------------|
+| `author` | Returns the associated `Author`, or `nil` |
+| `author=` | Assigns an `Author` (sets the foreign key) |
+| `build_author(attrs)` | Instantiates a new `Author` (not saved) |
+| `create_author(attrs)` | Creates and saves a new `Author` |
+| `create_author!(attrs)` | Same, raises on failure |
+| `reload_author` | Forces a database read |
+| `author_changed?` | Returns `true` if a new author has been assigned |
+| `author_previously_changed?` | Returns `true` if the association changed on the last save |
+
+## `has_one`
+
+Indicates that one other model has a reference to this model. The foreign key is on the **other** table.
+
+```ruby
+class Supplier < ApplicationRecord
+  has_one :account
+end
+```
+
+```ruby
+class CreateSuppliers < ActiveRecord::Migration[8.2]
+  def change
+    create_table :suppliers do |t|
+      t.string :name
+      t.timestamps
+    end
+
+    create_table :accounts do |t|
+      t.belongs_to :supplier
+      t.string :account_number
+      t.timestamps
+    end
+  end
+end
+```
+
+### Methods added by `has_one`
+
+Given `has_one :account`, a `Supplier` instance gains:
+
+| Method | Description |
+|--------|-------------|
+| `account` | Returns the associated `Account`, or `nil` |
+| `account=` | Assigns an `Account` |
+| `build_account(attrs)` | Instantiates a new `Account` (not saved) |
+| `create_account(attrs)` | Creates and saves a new `Account` |
+| `create_account!(attrs)` | Same, raises on failure |
+| `reload_account` | Forces a database read |
+
+## `has_many`
+
+Indicates a one-to-many relationship. The other model's table contains the foreign key.
+
+```ruby
+class Author < ApplicationRecord
+  has_many :books
+end
+```
+
+<Note>
+Unlike `has_one`, the model name is **pluralized** when declaring `has_many`.
+</Note>
+
+```ruby
+class CreateAuthors < ActiveRecord::Migration[8.2]
+  def change
+    create_table :authors do |t|
+      t.string :name
+      t.timestamps
+    end
+
+    create_table :books do |t|
+      t.belongs_to :author, index: true, foreign_key: true
+      t.datetime :published_at
+      t.timestamps
+    end
+  end
+end
+```
+
+### Methods added by `has_many`
+
+Given `has_many :books`, an `Author` instance gains:
+
+```
+books                           # returns the collection
+books << (object, ...)          # adds objects
+books.delete(object, ...)       # removes by setting FK to NULL
+books.destroy(object, ...)      # removes by calling destroy
+books = (objects)               # replaces the collection
+book_ids                        # returns array of IDs
+book_ids = (ids)                # replaces collection by IDs
+books.clear                     # removes all objects
+books.empty?                    # true if no associated books
+books.size                      # count of associated books
+books.find(...)                 # find within the collection
+books.where(...)                # filter within the collection
+books.exists?(...)              # check existence
+books.build(attrs)              # build new (not saved)
+books.create(attrs)             # create and save
+books.create!(attrs)            # create and save, raise on failure
+books.reload                    # force a database read
+```
+
+## `has_many :through`
+
+Sets up a many-to-many relationship through an intermediate "join" model. This allows you to add validations, callbacks, and extra attributes to the join.
+
+```ruby
+class Physician < ApplicationRecord
+  has_many :appointments
+  has_many :patients, through: :appointments
+end
+
+class Appointment < ApplicationRecord
+  belongs_to :physician
+  belongs_to :patient
+end
+
+class Patient < ApplicationRecord
+  has_many :appointments
+  has_many :physicians, through: :appointments
+end
+```
+
+```ruby
+class CreateAppointments < ActiveRecord::Migration[8.2]
+  def change
+    create_table :physicians do |t|
+      t.string :name
+      t.timestamps
+    end
+
+    create_table :patients do |t|
+      t.string :name
+      t.timestamps
+    end
+
+    create_table :appointments do |t|
+      t.belongs_to :physician
+      t.belongs_to :patient
+      t.datetime :appointment_date
+      t.timestamps
+    end
+  end
+end
+```
+
+`has_many :through` is also useful for shortcuts through nested associations:
+
+```ruby
+class Document < ApplicationRecord
+  has_many :sections
+  has_many :paragraphs, through: :sections
+end
+
+# Access all paragraphs directly
+@document.paragraphs
+```
+
+## `has_one :through`
+
+Sets up a one-to-one relationship through an intermediary model:
+
+```ruby
+class Supplier < ApplicationRecord
+  has_one :account
+  has_one :account_history, through: :account
+end
+
+class Account < ApplicationRecord
+  belongs_to :supplier
+  has_one :account_history
+end
+
+class AccountHistory < ApplicationRecord
+  belongs_to :account
+end
+```
+
+A `Supplier` instance can now access `supplier.account_history` directly.
+
+## `has_and_belongs_to_many`
+
+Creates a direct many-to-many relationship with no intervening model. Requires a join table (without a primary key):
+
+```ruby
+class Assembly < ApplicationRecord
+  has_and_belongs_to_many :parts
+end
+
+class Part < ApplicationRecord
+  has_and_belongs_to_many :assemblies
+end
+```
+
+```ruby
+class CreateAssembliesAndParts < ActiveRecord::Migration[8.2]
+  def change
+    create_table :assemblies do |t|
+      t.string :name
+      t.timestamps
+    end
+
+    create_table :parts do |t|
+      t.string :part_number
+      t.timestamps
+    end
+
+    create_table :assemblies_parts, id: false do |t|
+      t.belongs_to :assembly
+      t.belongs_to :part
+    end
+  end
+end
+```
+
+<Warning>
+If you need extra attributes or validations on the join table, use `has_many :through` instead. Extra attributes on a HABTM join table are read-only, and this pattern is deprecated.
+</Warning>
+
+## Choosing between associations
+
+<AccordionGroup>
+  <Accordion title="belongs_to vs has_one">
+    The distinction lies in where the foreign key lives:
+
+    - **`belongs_to`**: The current model's table has the foreign key. The current model is the "child."
+    - **`has_one`**: The other model's table has the foreign key. The current model is the "parent."
+
+    A supplier *has one* account (supplier is the parent), so:
+
+    ```ruby
+    class Supplier < ApplicationRecord
+      has_one :account
+    end
+
+    class Account < ApplicationRecord
+      belongs_to :supplier
+    end
+    ```
+  </Accordion>
+  <Accordion title="has_many :through vs has_and_belongs_to_many">
+    Use **`has_many :through`** when:
+    - You need validations or callbacks on the join
+    - The join table needs extra attributes
+    - The join table should be treated as an independent entity
+
+    Use **`has_and_belongs_to_many`** when:
+    - The association is simple with no extra attributes or behaviors needed
+    - You don't need validations or callbacks on the join
+  </Accordion>
+</AccordionGroup>
+
+## Polymorphic associations
+
+A polymorphic association allows a model to belong to more than one other model through a single association. The `pictures` model below can belong to either `Employee` or `Product`:
+
+```ruby
+class Picture < ApplicationRecord
+  belongs_to :imageable, polymorphic: true
+end
+
+class Employee < ApplicationRecord
+  has_many :pictures, as: :imageable
+end
+
+class Product < ApplicationRecord
+  has_many :pictures, as: :imageable
+end
+```
+
+The migration uses `polymorphic: true`, which creates both the `_id` and `_type` columns:
+
+```ruby
+class CreatePictures < ActiveRecord::Migration[8.2]
+  def change
+    create_table :pictures do |t|
+      t.string :name
+      t.belongs_to :imageable, polymorphic: true
+      t.timestamps
+    end
+  end
+end
+```
+
+This creates `imageable_id` and `imageable_type` columns. Active Record stores the class name in `imageable_type` (e.g., `"Employee"` or `"Product"`).
+
+```ruby
+@employee.pictures   # all pictures belonging to this employee
+@product.pictures    # all pictures belonging to this product
+@picture.imageable   # the parent Employee or Product
+```
+
+<Warning>
+When renaming a class used in a polymorphic association, you must migrate the data in the `_type` column to match the new class name.
+</Warning>
+
+## Association options
+
+Common options available on all association types:
+
+| Option | Description |
+|--------|-------------|
+| `:dependent` | What happens to associated records when the owner is destroyed. Options: `:destroy`, `:delete_all`, `:nullify`, `:restrict_with_error`, `:restrict_with_exception` |
+| `:class_name` | Specify the model class name when it can't be inferred from the association name |
+| `:foreign_key` | Specify a custom foreign key column name |
+| `:primary_key` | Specify a custom primary key on the associated model |
+| `:through` | The join model for `has_many :through` or `has_one :through` |
+| `:source` | The source association name on the `:through` model |
+| `:inverse_of` | The name of the inverse association (improves performance and enables in-memory association) |
+| `:optional` | (`belongs_to`) Allow the foreign key to be `nil` |
+| `:as` | (`has_many`/`has_one`) Used for polymorphic associations on the owner side |
+| `:polymorphic` | (`belongs_to`) Indicates this is a polymorphic association |
+
+### Examples
+
+```ruby
+class Book < ApplicationRecord
+  # Custom class name and foreign key
+  belongs_to :writer, class_name: "Author", foreign_key: "author_id"
+end
+
+class Author < ApplicationRecord
+  # Destroy all books when author is destroyed
+  has_many :books, dependent: :destroy
+
+  # Custom class name for self-referential association
+  has_many :followers, class_name: "Author", foreign_key: "followee_id"
+end
+
+class Physician < ApplicationRecord
+  # has_many :through with explicit source
+  has_many :appointments
+  has_many :patients, through: :appointments, source: :patient
+end
+```
+
+## Self joins
+
+A model can have an association with itself. Common for hierarchical data like an employee management system:
+
+```ruby
+class Employee < ApplicationRecord
+  has_many :subordinates, class_name: "Employee", foreign_key: "manager_id"
+  belongs_to :manager, class_name: "Employee", optional: true
+end
+```
+
+```ruby
+@employee.subordinates  # employees managed by this employee
+@employee.manager       # this employee's manager
+```

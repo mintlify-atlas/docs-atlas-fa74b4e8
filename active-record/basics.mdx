@@ -1,0 +1,347 @@
+---
+title: "Active Record Basics"
+description: "An introduction to Active Record, Rails' ORM layer, including naming conventions and CRUD operations."
+---
+
+Active Record is the M in [MVC](https://en.wikipedia.org/wiki/Model%E2%80%93view%E2%80%93controller) — the model layer responsible for representing business data and logic. It helps you create and use Ruby objects whose attributes require persistent storage in a database.
+
+<CardGroup cols={2}>
+  <Card title="The Active Record pattern" icon="database">
+    Objects that wrap a database row, encapsulate access, and add domain logic — as described by Martin Fowler in _Patterns of Enterprise Application Architecture_.
+  </Card>
+  <Card title="Object Relational Mapping" icon="arrows-left-right">
+    Active Record connects rich Ruby objects to tables in a relational database without writing SQL statements directly.
+  </Card>
+  <Card title="Convention over configuration" icon="wand-magic-sparkles">
+    Follow Rails naming conventions and you write little to no configuration code when creating models.
+  </Card>
+  <Card title="Full CRUD support" icon="pencil">
+    Create, read, update, and delete records using expressive Ruby methods that generate the correct SQL automatically.
+  </Card>
+</CardGroup>
+
+## What Active Record provides
+
+Active Record gives you the ability to:
+
+- Represent models and their data
+- Represent associations between models
+- Represent inheritance hierarchies through related models
+- Validate models before they get persisted to the database
+- Perform database operations in an object-oriented fashion
+
+## Naming conventions
+
+Rails maps between model class names and database table names automatically. You only need to override these conventions if you are integrating with a legacy database.
+
+### Class to table mapping
+
+| Model / Class | Table / Schema |
+|---------------|----------------|
+| `Article`     | `articles`     |
+| `LineItem`    | `line_items`   |
+| `Product`     | `products`     |
+| `Person`      | `people`       |
+| `BookClub`    | `book_clubs`   |
+
+Rails pluralizes model class names using Active Support's `pluralize` method, which handles both regular and irregular English words.
+
+### Schema conventions
+
+Active Record uses conventions for column names depending on their purpose:
+
+- **Primary keys** — An integer column named `id` (`bigint` for PostgreSQL/MySQL/MariaDB, `integer` for SQLite). Created automatically by migrations.
+- **Foreign keys** — Named `singularized_table_name_id` (e.g., `order_id`, `line_item_id`). Active Record looks for these when you set up associations.
+
+Optional columns that add extra features:
+
+| Column | Purpose |
+|--------|---------|
+| `created_at` | Set automatically when a record is first created |
+| `updated_at` | Set automatically whenever a record is created or updated |
+| `lock_version` | Adds optimistic locking to a model |
+| `type` | Used for Single Table Inheritance |
+| `(association_name)_type` | Stores the type for polymorphic associations |
+| `(table_name)_count` | Caches the count of belonging objects on associations |
+
+<Warning>
+`type` is a reserved keyword used to designate STI tables. Avoid naming non-STI columns `type`.
+</Warning>
+
+## Creating models
+
+When you generate a Rails application, an abstract `ApplicationRecord` class is created in `app/models/application_record.rb`. It inherits from `ActiveRecord::Base` and is the base class for all your models.
+
+To create a new model, subclass `ApplicationRecord`:
+
+```ruby
+class Book < ApplicationRecord
+end
+```
+
+This creates a `Book` model mapped to the `books` table. Each column in the table maps to an attribute on `Book` instances.
+
+You can generate a model and its migration together:
+
+```bash
+bin/rails generate model Book title:string author:string
+```
+
+This creates `app/models/book.rb`, a migration file, and test files. The resulting migration looks like this:
+
+```ruby
+# db/migrate/20240220143807_create_books.rb
+class CreateBooks < ActiveRecord::Migration[8.2]
+  def change
+    create_table :books do |t|
+      t.string :title
+      t.string :author
+
+      t.timestamps
+    end
+  end
+end
+```
+
+<Note>
+The `id` column (primary key) is created automatically by convention. `t.timestamps` adds `created_at` and `updated_at`.
+</Note>
+
+### Overriding naming conventions
+
+If you need to use a legacy database or a different naming convention, you can override the defaults:
+
+```ruby
+class Book < ApplicationRecord
+  self.table_name = "my_books"
+  self.primary_key = "book_id"
+end
+```
+
+## CRUD: reading and writing data
+
+Active Record automatically creates methods to read and manipulate data. All these methods generate SQL statements that run against the underlying database.
+
+<Tabs>
+  <Tab title="Create">
+    Active Record objects can be created from a hash, a block, or by setting attributes manually. `new` returns an unsaved object; `create` saves it immediately.
+
+    ```ruby
+    # create saves immediately and returns the object
+    book = Book.create(title: "The Lord of the Rings", author: "J.R.R. Tolkien")
+    # => #<Book id: 106, title: "The Lord of the Rings", ...>
+
+    # new instantiates without saving
+    book = Book.new
+    book.title = "The Hobbit"
+    book.author = "J.R.R. Tolkien"
+    book.save
+    book.id # => 107
+
+    # Block form — both new and create yield the object
+    book = Book.new do |b|
+      b.title = "Metaprogramming Ruby 2"
+      b.author = "Paolo Perrotta"
+    end
+    book.save
+    ```
+
+    The resulting SQL:
+
+    ```sql
+    INSERT INTO "books" ("title", "author", "created_at", "updated_at")
+    VALUES (?, ?, ?, ?) RETURNING "id"
+    ```
+
+    To insert records in bulk without callbacks or validations:
+
+    ```ruby
+    Book.insert(title: "The Lord of the Rings", author: "J.R.R. Tolkien")
+    Book.insert_all([{ title: "Book 1", author: "Author 1" },
+                     { title: "Book 2", author: "Author 2" }])
+    ```
+  </Tab>
+  <Tab title="Read">
+    Active Record provides a rich API for accessing data. You can query single or multiple records, filter by attributes, and much more.
+
+    ```ruby
+    # Return all books
+    books = Book.all
+
+    # Return a single book
+    first_book = Book.first
+    last_book  = Book.last
+    book       = Book.take       # no implicit ordering
+    ```
+
+    The SQL generated:
+
+    ```sql
+    -- Book.all
+    SELECT "books".* FROM "books"
+
+    -- Book.first
+    SELECT "books".* FROM "books" ORDER BY "books"."id" ASC LIMIT 1
+
+    -- Book.last
+    SELECT "books".* FROM "books" ORDER BY "books"."id" DESC LIMIT 1
+    ```
+
+    Find specific records:
+
+    ```ruby
+    # find_by returns the first match or nil
+    book = Book.find_by(title: "Metaprogramming Ruby 2")
+
+    # find raises ActiveRecord::RecordNotFound if missing
+    book = Book.find(42)
+
+    # where returns a collection
+    Book.where(author: "Douglas Adams").order(created_at: :desc)
+    ```
+  </Tab>
+  <Tab title="Update">
+    Once retrieved, an object's attributes can be modified and saved.
+
+    ```ruby
+    # Modify then save
+    book = Book.find_by(title: "The Lord of the Rings")
+    book.title = "The Lord of the Rings: The Fellowship of the Ring"
+    book.save
+
+    # Shorthand with update
+    book = Book.find_by(title: "The Lord of the Rings")
+    book.update(title: "The Lord of the Rings: The Fellowship of the Ring")
+    ```
+
+    The resulting SQL:
+
+    ```sql
+    UPDATE "books"
+    SET "title" = ?, "updated_at" = ?
+    WHERE "books"."id" = ?
+    ```
+
+    To update many records in bulk without callbacks or validations:
+
+    ```ruby
+    Book.update_all(status: "already own")
+    ```
+  </Tab>
+  <Tab title="Delete">
+    A retrieved Active Record object can be destroyed, removing it from the database.
+
+    ```ruby
+    book = Book.find_by(title: "The Lord of the Rings")
+    book.destroy
+    ```
+
+    The resulting SQL:
+
+    ```sql
+    DELETE FROM "books" WHERE "books"."id" = ?
+    ```
+
+    Bulk deletion:
+
+    ```ruby
+    # Destroys matching records (runs callbacks)
+    Book.destroy_by(author: "Douglas Adams")
+
+    # Destroys all records
+    Book.destroy_all
+
+    # Deletes directly from the database (skips callbacks)
+    Book.find_by(title: "The Lord of the Rings").delete
+    Book.delete_all
+    ```
+  </Tab>
+</Tabs>
+
+## Validations
+
+Active Record validates models before persisting them. If the model is invalid, no database operations are performed and `save`/`update` return `false`.
+
+```ruby
+class User < ApplicationRecord
+  validates :name, presence: true
+end
+```
+
+```ruby
+user = User.new
+user.save   # => false
+user.save!  # => ActiveRecord::RecordInvalid: Validation failed: Name can't be blank
+
+user = User.create
+user.errors.full_messages # => ["Name can't be blank"]
+```
+
+The bang versions (`save!`, `create!`, `update!`) raise `ActiveRecord::RecordInvalid` when validation fails. See the [validations guide](/active-record/validations) for full details.
+
+## Callbacks
+
+Active Record callbacks attach code to events in a model's lifecycle, such as creation, update, or destruction.
+
+```ruby
+class User < ApplicationRecord
+  after_create :log_new_user
+
+  private
+    def log_new_user
+      puts "A new user was registered"
+    end
+end
+```
+
+```ruby
+@user = User.create
+# => A new user was registered
+```
+
+Common callback hooks include `before_validation`, `after_validation`, `before_save`, `after_save`, `before_create`, `after_create`, `before_update`, `after_update`, `before_destroy`, and `after_destroy`.
+
+## Migrations
+
+Rails manages database schema changes through migrations, which are stored as Ruby files and run against any supported database.
+
+```ruby
+class CreatePublications < ActiveRecord::Migration[8.2]
+  def change
+    create_table :publications do |t|
+      t.string :title
+      t.text :description
+      t.references :publisher, polymorphic: true
+      t.boolean :single_issue
+
+      t.timestamps
+    end
+  end
+end
+```
+
+Run migrations with:
+
+```bash
+bin/rails db:migrate
+```
+
+Roll back the last migration with:
+
+```bash
+bin/rails db:rollback
+```
+
+Rails tracks which migrations have run using the `schema_migrations` table. See the [migrations guide](/active-record/migrations) for full details.
+
+## Associations
+
+Associations define relationships between models and add methods to work with related data.
+
+```ruby
+class Author < ApplicationRecord
+  has_many :books
+end
+```
+
+The `Author` class now has methods like `author.books`, `author.books.create(...)`, and `author.books.destroy(...)`. See the [associations guide](/active-record/associations) for full details.

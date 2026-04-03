@@ -1,0 +1,455 @@
+---
+title: "Active Record Migrations"
+description: "Manage database schema changes over time using Rails' Ruby-based migration DSL."
+---
+
+Migrations are a feature of Active Record that let you evolve your database schema over time in a reproducible way. Instead of writing schema modifications in raw SQL, migrations use a Ruby DSL so that your schema changes are database-independent and version-controlled.
+
+You can think of each migration as a new "version" of the database. A schema starts with nothing, and each migration modifies it — adding or removing tables, columns, or indexes. Active Record tracks which migrations have run and knows how to apply or reverse each one.
+
+<Note>
+Running `bin/rails db:migrate` also invokes `db:schema:dump`, which updates `db/schema.rb` to match the current database structure.
+</Note>
+
+## Generating migration files
+
+Migrations are stored as files in `db/migrate/`. Each filename begins with a UTC timestamp so Rails can run them in the correct order: `YYYYMMDDHHMMSS_migration_name.rb`.
+
+### Creating a new table
+
+Use the `CreateXXX` naming convention with a list of column names and types:
+
+```bash
+bin/rails generate migration CreateProducts name:string part_number:string
+```
+
+This generates:
+
+```ruby
+class CreateProducts < ActiveRecord::Migration[8.2]
+  def change
+    create_table :products do |t|
+      t.string :name
+      t.string :part_number
+
+      t.timestamps
+    end
+  end
+end
+```
+
+<Note>
+If you don't specify a type for a field (e.g., `name` instead of `name:string`), Rails defaults to `string`.
+</Note>
+
+### Adding columns
+
+Use the `AddColumnToTable` naming pattern to generate `add_column` statements automatically:
+
+```bash
+bin/rails generate migration AddPartNumberToProducts part_number:string
+```
+
+```ruby
+class AddPartNumberToProducts < ActiveRecord::Migration[8.2]
+  def change
+    add_column :products, :part_number, :string
+  end
+end
+```
+
+Add an index at the same time with the `:index` suffix:
+
+```bash
+bin/rails generate migration AddPartNumberToProducts part_number:string:index
+```
+
+```ruby
+class AddPartNumberToProducts < ActiveRecord::Migration[8.2]
+  def change
+    add_column :products, :part_number, :string
+    add_index :products, :part_number
+  end
+end
+```
+
+### Removing columns
+
+Use the `RemoveColumnFromTable` naming pattern:
+
+```bash
+bin/rails generate migration RemovePartNumberFromProducts part_number:string
+```
+
+```ruby
+class RemovePartNumberFromProducts < ActiveRecord::Migration[8.2]
+  def change
+    remove_column :products, :part_number, :string
+  end
+end
+```
+
+### Adding references (foreign keys)
+
+Use the `references` column type to create foreign key columns, indexes, and optional foreign key constraints:
+
+```bash
+bin/rails generate migration AddUserRefToProducts user:references
+```
+
+```ruby
+class AddUserRefToProducts < ActiveRecord::Migration[8.2]
+  def change
+    add_reference :products, :user, null: false, foreign_key: true
+  end
+end
+```
+
+This creates a `user_id` column in the `products` table, an index on `user_id`, and a foreign key constraint referencing `users.id`.
+
+### Creating join tables
+
+If `JoinTable` is part of the migration name, a join table is generated:
+
+```bash
+bin/rails generate migration CreateJoinTableUserProduct user product
+```
+
+```ruby
+class CreateJoinTableUserProduct < ActiveRecord::Migration[8.2]
+  def change
+    create_join_table :users, :products do |t|
+      # t.index [:user_id, :product_id]
+      # t.index [:product_id, :user_id]
+    end
+  end
+end
+```
+
+### Passing modifiers
+
+You can pass type modifiers on the command line using curly braces:
+
+```bash
+bin/rails generate migration AddDetailsToProducts 'price:decimal{5,2}' supplier:references{polymorphic}
+```
+
+```ruby
+class AddDetailsToProducts < ActiveRecord::Migration[8.2]
+  def change
+    add_column :products, :price, :decimal, precision: 5, scale: 2
+    add_reference :products, :supplier, polymorphic: true
+  end
+end
+```
+
+Use `!` to enforce a `NOT NULL` constraint:
+
+```bash
+bin/rails generate migration AddEmailToUsers email:string!
+```
+
+```ruby
+class AddEmailToUsers < ActiveRecord::Migration[8.2]
+  def change
+    add_column :users, :email, :string, null: false
+  end
+end
+```
+
+## Migration DSL reference
+
+<AccordionGroup>
+  <Accordion title="create_table">
+    The most fundamental migration method. Creates a table with the given columns. A primary key column named `id` is added implicitly.
+
+    ```ruby
+    create_table :products do |t|
+      t.string :name
+      t.text   :description
+      t.timestamps
+    end
+    ```
+
+    To customize the primary key:
+
+    ```ruby
+    create_table :users, primary_key: "user_id" do |t|
+      t.string :username
+      t.string :email
+      t.timestamps
+    end
+    ```
+
+    To create a table without a primary key (e.g., for join tables):
+
+    ```ruby
+    create_table :assemblies_parts, id: false do |t|
+      t.belongs_to :assembly
+      t.belongs_to :part
+    end
+    ```
+  </Accordion>
+  <Accordion title="change_table">
+    Modify an existing table. The block object has access to `remove`, `string`, `index`, `rename`, and other methods:
+
+    ```ruby
+    change_table :products do |t|
+      t.remove :description, :name
+      t.string :part_number
+      t.index  :part_number
+      t.rename :upccode, :upc_code
+    end
+    ```
+  </Accordion>
+  <Accordion title="add_column / remove_column">
+    Add or remove individual columns:
+
+    ```ruby
+    add_column :products, :part_number, :string
+    remove_column :products, :part_number, :string
+    ```
+  </Accordion>
+  <Accordion title="change_column">
+    Change a column's type. Note: `change_column` is **irreversible** — provide a `reversible` block if needed.
+
+    ```ruby
+    change_column :products, :part_number, :text
+    ```
+
+    Change a column's default value (reversible when using `:from`/`:to`):
+
+    ```ruby
+    change_column_default :products, :approved, from: true, to: false
+    ```
+
+    Change a null constraint:
+
+    ```ruby
+    change_column_null :products, :name, false
+    ```
+  </Accordion>
+  <Accordion title="add_index / remove_index">
+    Add or remove an index on one or more columns:
+
+    ```ruby
+    add_index :users, :email, unique: true
+    add_index :users, [:last_name, :first_name]
+    remove_index :users, :email
+    ```
+  </Accordion>
+  <Accordion title="add_foreign_key / remove_foreign_key">
+    Add or remove a database-level foreign key constraint:
+
+    ```ruby
+    add_foreign_key :articles, :authors
+    remove_foreign_key :accounts, :branches
+    ```
+
+    With custom column or primary key:
+
+    ```ruby
+    add_foreign_key :articles, :authors, column: :reviewer, primary_key: :email
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Column types
+
+Active Record supports the following column types across all databases:
+
+| Type | Description |
+|------|-------------|
+| `:string` | Short string (varchar) |
+| `:text` | Long string (text) |
+| `:integer` | Integer number |
+| `:bigint` | Large integer |
+| `:float` | Floating-point number |
+| `:decimal` | Exact decimal number |
+| `:boolean` | True/false |
+| `:date` | Date only |
+| `:time` | Time only |
+| `:datetime` | Date and time |
+| `:binary` | Binary data |
+| `:references` | Foreign key column (plus index and optional FK constraint) |
+| `:json` / `:jsonb` | JSON data (PostgreSQL) |
+
+### Column modifiers
+
+Modifiers can be applied when creating or changing a column:
+
+| Modifier | Description |
+|----------|-------------|
+| `null` | Allow or disallow `NULL` values |
+| `default` | Set a default value |
+| `limit` | Max characters (string) or bytes (text/binary/integer) |
+| `precision` | Digits for decimal/numeric/datetime/time |
+| `scale` | Decimal digits after the decimal point |
+| `comment` | Comment stored in the database |
+| `collation` | Collation for string/text columns |
+
+```ruby
+add_column :products, :price, :decimal, precision: 8, scale: 2, null: false, default: 0
+```
+
+## Running migrations
+
+<Steps>
+  <Step title="Run all pending migrations">
+    ```bash
+    bin/rails db:migrate
+    ```
+
+    Runs all migrations that have not yet been applied, in timestamp order.
+  </Step>
+  <Step title="Migrate to a specific version">
+    ```bash
+    bin/rails db:migrate VERSION=20240428000000
+    ```
+
+    Migrates up or down to the specified version.
+  </Step>
+  <Step title="Roll back the last migration">
+    ```bash
+    bin/rails db:rollback
+    ```
+
+    Reverts the most recent migration. Use `STEP=n` to roll back multiple migrations:
+
+    ```bash
+    bin/rails db:rollback STEP=3
+    ```
+  </Step>
+  <Step title="Re-run the last migration">
+    ```bash
+    bin/rails db:migrate:redo STEP=3
+    ```
+
+    Rolls back and re-runs the specified number of migrations.
+  </Step>
+  <Step title="Run in a specific environment">
+    ```bash
+    bin/rails db:migrate RAILS_ENV=test
+    ```
+  </Step>
+</Steps>
+
+### Other database commands
+
+| Command | Purpose |
+|---------|---------|
+| `bin/rails db:setup` | Create database, load schema, seed data |
+| `bin/rails db:prepare` | Idempotent setup — only does what is needed |
+| `bin/rails db:reset` | Drop and re-create the database from `schema.rb` |
+| `bin/rails db:seed` | Load seed data from `db/seeds.rb` |
+| `bin/rails db:migrate:status` | Show the status (up/down) of each migration |
+
+## Reversible migrations
+
+The `change` method handles reversibility automatically for most operations. For operations that Active Record can't auto-reverse, use `reversible`:
+
+```ruby
+class ChangeProductsPrice < ActiveRecord::Migration[8.2]
+  def change
+    reversible do |direction|
+      change_table :products do |t|
+        direction.up   { t.change :price, :string }
+        direction.down { t.change :price, :integer }
+      end
+    end
+  end
+end
+```
+
+Or use explicit `up` and `down` methods:
+
+```ruby
+class ChangeProductsPrice < ActiveRecord::Migration[8.2]
+  def up
+    change_table :products do |t|
+      t.change :price, :string
+    end
+  end
+
+  def down
+    change_table :products do |t|
+      t.change :price, :integer
+    end
+  end
+end
+```
+
+For truly irreversible migrations, raise `ActiveRecord::IrreversibleMigration`:
+
+```ruby
+def down
+  raise ActiveRecord::IrreversibleMigration, "This migration cannot be reverted because it destroys data."
+end
+```
+
+## Schema files
+
+### `schema.rb` vs `structure.sql`
+
+Active Record maintains a `db/schema.rb` file that reflects the current state of your database. It is faster and less error-prone to create a new database from `schema.rb` than to replay the entire migration history.
+
+```ruby
+# db/schema.rb
+ActiveRecord::Schema[8.2].define(version: 2024_05_02_100843) do
+  create_table "products", force: :cascade do |t|
+    t.string   "name"
+    t.text     "description"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+end
+```
+
+<Tabs>
+  <Tab title="schema.rb (default)">
+    The default `:ruby` format. Database-independent and readable. Does not capture database-specific features like triggers, sequences, or stored procedures.
+
+    Load with:
+
+    ```bash
+    bin/rails db:schema:load
+    ```
+  </Tab>
+  <Tab title="structure.sql">
+    When `config.active_record.schema_format = :sql`, Rails dumps using a database-specific tool (e.g., `pg_dump` for PostgreSQL). Captures all database-specific features.
+
+    Load with:
+
+    ```bash
+    bin/rails db:schema:load
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Schema files are useful for a quick look at what attributes an Active Record model has, since that information is spread across many migrations.
+</Tip>
+
+<Warning>
+Always check `db/schema.rb` into source control. It is the authoritative source for rebuilding your database.
+</Warning>
+
+## Seed data
+
+The `db/seeds.rb` file is used to set up initial data for a new database instance:
+
+```ruby
+["Action", "Comedy", "Drama", "Horror"].each do |genre_name|
+  MovieGenre.find_or_create_by!(name: genre_name)
+end
+```
+
+Run seeds with:
+
+```bash
+bin/rails db:seed
+```
+
+<Tip>
+Seed code should be idempotent so it can safely be run multiple times in any environment.
+</Tip>

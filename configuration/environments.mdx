@@ -1,0 +1,302 @@
+---
+title: "Rails Environments"
+description: "Understand development, test, and production environments in Rails and how to configure each one."
+---
+
+Rails ships with three environments: `development`, `test`, and `production`. Each has a dedicated configuration file under `config/environments/` that overrides defaults set in `config/application.rb`.
+
+## Using Rails.env
+
+Check the current environment anywhere in your application:
+
+```ruby
+Rails.env.development? # => true in development
+Rails.env.test?        # => true in test
+Rails.env.production?  # => true in production
+Rails.env.local?       # => true in development or test
+```
+
+You can also read it as a string:
+
+```ruby
+Rails.env # => "development"
+```
+
+## Environment Files
+
+<Tabs>
+  <Tab title="Development">
+    `config/environments/development.rb` optimizes for developer productivity. Code reloads on every request, detailed errors are shown, and various debugging helpers are enabled.
+
+    ```ruby
+    Rails.application.configure do
+      # Reload code on each request without restarting the server
+      config.enable_reloading = true
+
+      # Do not eager load — faster boot time during development
+      config.eager_load = false
+
+      # Show full error reports in the browser
+      config.consider_all_requests_local = true
+
+      # Enable Server-Timing header for profiling in browser DevTools
+      config.server_timing = true
+
+      # In-memory cache store (toggle with `bin/rails dev:cache`)
+      config.cache_store = :memory_store
+
+      # Don't raise if mailer can't send
+      config.action_mailer.raise_delivery_errors = false
+      config.action_mailer.perform_caching = false
+      config.action_mailer.default_url_options = { host: "localhost", port: 3000 }
+
+      # Print deprecation notices to the Rails logger
+      config.active_support.deprecation = :log
+
+      # Raise on page load if there are pending migrations
+      config.active_record.migration_error = :page_load
+
+      # Log verbose query information with file origins
+      config.active_record.verbose_query_logs = true
+
+      # Append SQLcommenter tags to SQL queries in logs
+      config.active_record.query_log_tags_enabled = true
+
+      # Highlight code that enqueued background jobs in logs
+      config.active_job.verbose_enqueue_logs = true
+
+      # Highlight code that triggered redirects in logs
+      config.action_dispatch.verbose_redirect_logs = true
+
+      # Suppress logging of asset requests
+      config.assets.quiet = true
+
+      # Annotate HTML output with the partial file name that rendered it
+      config.action_view.annotate_rendered_view_with_filenames = true
+
+      # Raise error when before_action :only/:except references missing actions
+      config.action_controller.raise_on_missing_callback_actions = true
+    end
+    ```
+
+    <Tip>
+      Run `bin/rails dev:cache` to toggle Action Controller caching in development. When enabled, Rails writes a `tmp/caching-dev.txt` file and activates fragment caching.
+    </Tip>
+  </Tab>
+
+  <Tab title="Test">
+    `config/environments/test.rb` is used exclusively when running your test suite. The test database is wiped and recreated between test runs.
+
+    ```ruby
+    Rails.application.configure do
+      # No need to reload — files don't change while tests run
+      config.enable_reloading = false
+
+      # Only eager load when running in CI; keeps local runs fast
+      config.eager_load = ENV["CI"].present?
+      config.rake_eager_load = ENV["CI"].present?
+
+      # Cache-control headers for static files
+      config.public_file_server.headers = {
+        "cache-control" => "public, max-age=3600"
+      }
+
+      # Show full error reports (no need to hide in test)
+      config.consider_all_requests_local = true
+
+      # Use null cache so nothing persists between tests
+      config.cache_store = :null_store
+
+      # Render exception templates for rescuable exceptions; raise all others
+      config.action_dispatch.show_exceptions = :rescuable
+
+      # Disable CSRF protection in tests
+      config.action_controller.allow_forgery_protection = false
+
+      # Collect sent emails in ActionMailer::Base.deliveries array
+      config.action_mailer.delivery_method = :test
+      config.action_mailer.default_url_options = { host: "example.com" }
+
+      # Print deprecations to stderr
+      config.active_support.deprecation = :stderr
+
+      # Raise error when before_action references missing actions
+      config.action_controller.raise_on_missing_callback_actions = true
+    end
+    ```
+
+    <Note>
+      Enabling `config.eager_load` in CI environments catches eager-loading errors before they reach production. It is deliberately disabled for local runs to keep the test suite fast.
+    </Note>
+  </Tab>
+
+  <Tab title="Production">
+    `config/environments/production.rb` is optimized for performance and security. Code is not reloaded, eager loading is on, and detailed error output is suppressed.
+
+    ```ruby
+    Rails.application.configure do
+      # Code is not reloaded between requests
+      config.enable_reloading = false
+
+      # Eager load all code on boot for better performance
+      config.eager_load = true
+
+      # Do not expose detailed errors to end users
+      config.consider_all_requests_local = false
+
+      # Turn on fragment caching in view templates
+      config.action_controller.perform_caching = true
+
+      # Cache assets with far-future expiry (all assets are digest-stamped)
+      config.public_file_server.headers = {
+        "cache-control" => "public, max-age=#{1.year.to_i}"
+      }
+
+      # Log to STDOUT tagged with the request ID
+      config.log_tags = [ :request_id ]
+      config.logger   = ActiveSupport::TaggedLogging.logger(STDOUT)
+
+      # Set log level (override via RAILS_LOG_LEVEL env var)
+      config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info")
+
+      # Silence health check endpoint from logs
+      config.silence_healthcheck_path = "/up"
+
+      # Don't log deprecation notices
+      config.active_support.report_deprecations = false
+
+      # Enable locale fallbacks for i18n
+      config.i18n.fallbacks = true
+
+      # Do not dump schema after migrations
+      config.active_record.dump_schema_after_migration = false
+
+      # Limit inspect output to :id (avoids logging sensitive data)
+      config.active_record.attributes_for_inspect = [ :id ]
+    end
+    ```
+
+    <Warning>
+      In production, `config.consider_all_requests_local` must be `false`. Setting it to `true` exposes internal application details in HTTP responses.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Key Environment Differences
+
+<CardGroup cols={2}>
+  <Card title="Code Reloading" icon="rotate">
+    Enabled in **development** (`config.enable_reloading = true`). Disabled in **test** and **production** for performance.
+  </Card>
+  <Card title="Eager Loading" icon="bolt">
+    Disabled in **development** for fast boot. Optional in **test** (enabled in CI). Always on in **production** for best runtime performance.
+  </Card>
+  <Card title="Error Display" icon="triangle-exclamation">
+    Full error reports shown in **development** and **test** (`config.consider_all_requests_local = true`). Suppressed in **production**.
+  </Card>
+  <Card title="Cache Store" icon="database">
+    `:memory_store` in **development**. `:null_store` in **test** (no persistence between tests). A durable store (e.g., Redis, Memcache) recommended in **production**.
+  </Card>
+  <Card title="Log Level" icon="list">
+    `:debug` in **development** and **test**. `:info` (configurable via `RAILS_LOG_LEVEL`) in **production**.
+  </Card>
+  <Card title="YJIT" icon="gauge-high">
+    Disabled for local environments (development and test) as of Rails 8.1. Enabled automatically in **production** on Ruby 3.3+ since Rails 7.2.
+  </Card>
+</CardGroup>
+
+## Custom Environments
+
+You can create additional environments beyond the three defaults. For example, to add a `staging` environment:
+
+```bash
+# Create the environment config file
+cp config/environments/production.rb config/environments/staging.rb
+```
+
+Then start Rails or run commands in that environment:
+
+```bash
+RAILS_ENV=staging bin/rails server
+RAILS_ENV=staging bin/rails db:migrate
+```
+
+Check for a custom environment:
+
+```ruby
+Rails.env.staging? # => true when RAILS_ENV=staging
+```
+
+<Note>
+You will also need a corresponding section in `config/database.yml` for any environments that use Active Record.
+</Note>
+
+## Environment-Specific Initializers
+
+Place files that should only run in a specific environment inside `config/environments/` or use conditional blocks in `config/initializers/`:
+
+```ruby
+# config/initializers/my_service.rb
+if Rails.env.production?
+  MyService.api_key = Rails.application.credentials.my_service_api_key
+else
+  MyService.api_key = "development_key"
+end
+```
+
+Alternatively, use Rails' initialization events scoped to an environment:
+
+```ruby
+# config/environments/production.rb
+Rails.application.configure do
+  config.after_initialize do
+    # Code that runs only after production initialization
+  end
+end
+```
+
+## SSL Configuration
+
+<Tabs>
+  <Tab title="Behind a Reverse Proxy">
+    When your app sits behind an SSL-terminating proxy (e.g., a load balancer), forwarded requests appear as HTTP. Use `assume_ssl` to make Rails treat them as HTTPS:
+
+    ```ruby
+    config.assume_ssl = true
+    ```
+  </Tab>
+  <Tab title="Direct SSL">
+    To enforce HTTPS at the Rails level and redirect all HTTP requests:
+
+    ```ruby
+    config.force_ssl = true
+
+    # Exclude health check from SSL redirect
+    config.ssl_options = {
+      redirect: {
+        exclude: ->(request) { request.path == "/up" }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Host Authorization
+
+In production, configure allowed hosts to prevent DNS rebinding attacks:
+
+```ruby
+# Allow a specific domain and all subdomains
+config.hosts << "example.com"
+config.hosts << /.*\.example\.com/
+
+# Or use the dot-prefix shorthand for domain + all subdomains
+config.hosts << ".example.com"
+
+# Exclude health checks from host authorization
+config.host_authorization = {
+  exclude: ->(request) { request.path == "/up" }
+}
+```
+
+In development, `config.hosts` is pre-populated with `localhost`, all IPv4 and IPv6 addresses, and any hosts listed in `RAILS_DEVELOPMENT_HOSTS`.

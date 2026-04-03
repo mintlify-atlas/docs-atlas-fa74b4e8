@@ -1,0 +1,510 @@
+---
+title: "Custom Generators"
+description: "Create custom Rails generators to automate boilerplate, customize scaffolding, and extend existing generators."
+---
+
+Rails generators eliminate repetitive setup by automatically creating boilerplate code. Every time you run `bin/rails generate scaffold`, `bin/rails generate model`, or `bin/rails generate controller`, you are using generators. You can create your own generators to codify team conventions, scaffold domain-specific components, or replace built-in generators with customized versions.
+
+Generators are built on top of [Thor](https://github.com/rails/thor), which provides file manipulation actions and a CLI option parser.
+
+## Listing available generators
+
+```bash
+$ bin/rails generate
+```
+
+To see a detailed description of a specific generator:
+
+```bash
+$ bin/rails generate scaffold --help
+```
+
+## Creating your first generator
+
+The simplest generator inherits from `Rails::Generators::Base` and defines public methods. Each public method is executed sequentially when the generator runs.
+
+```ruby
+# lib/generators/initializer_generator.rb
+class InitializerGenerator < Rails::Generators::Base
+  desc "Creates an initializer file at config/initializers"
+
+  def create_initializer_file
+    create_file "config/initializers/initializer.rb", <<~RUBY
+      # Add initialization content here
+    RUBY
+  end
+end
+```
+
+Run it with:
+
+```bash
+$ bin/rails generate initializer
+```
+
+<Tip>
+Place generators in `lib/generators/` because that directory is on `$LOAD_PATH`. Rails will find and load generators from there automatically.
+</Tip>
+
+## Using the generator generator
+
+Rails can generate the scaffold for a new generator:
+
+```bash
+$ bin/rails generate generator initializer
+      create  lib/generators/initializer
+      create  lib/generators/initializer/initializer_generator.rb
+      create  lib/generators/initializer/USAGE
+      create  lib/generators/initializer/templates
+      invoke  test_unit
+      create    test/lib/generators/initializer_generator_test.rb
+```
+
+The generated generator inherits from `Rails::Generators::NamedBase`, which requires at least one argument (a `NAME`) and provides helpers like `file_name` and `class_name` derived from it:
+
+```ruby
+class InitializerGenerator < Rails::Generators::NamedBase
+  source_root File.expand_path("templates", __dir__)
+end
+```
+
+```bash
+$ bin/rails generate initializer --help
+Usage:
+  bin/rails generate initializer NAME [options]
+```
+
+## Generator base classes
+
+<Tabs>
+  <Tab title="Rails::Generators::Base">
+    Use when your generator does not need a name argument.
+
+    ```ruby
+    class SetupGenerator < Rails::Generators::Base
+      def create_config
+        create_file "config/my_plugin.yml", "enabled: true\n"
+      end
+    end
+    ```
+
+    ```bash
+    $ bin/rails generate setup
+    ```
+  </Tab>
+  <Tab title="Rails::Generators::NamedBase">
+    Use when your generator operates on a named resource. Provides `name`, `file_name`, `class_name`, `plural_name`, and other name-derived helpers.
+
+    ```ruby
+    class ServiceGenerator < Rails::Generators::NamedBase
+      source_root File.expand_path("templates", __dir__)
+
+      def create_service_file
+        create_file "app/services/#{file_name}_service.rb", <<~RUBY
+          class #{class_name}Service
+            def call
+            end
+          end
+        RUBY
+      end
+    end
+    ```
+
+    ```bash
+    $ bin/rails generate service payment
+    #   create  app/services/payment_service.rb
+    ```
+  </Tab>
+</Tabs>
+
+## Thor file actions
+
+Generators inherit all of Thor's file manipulation actions. The most commonly used ones are:
+
+<AccordionGroup>
+  <Accordion title="create_file">
+    Creates a file with given content. Warns and skips if the file already exists unless `--force` is passed.
+
+    ```ruby
+    create_file "config/initializers/my_plugin.rb", <<~RUBY
+      MyPlugin.configure do |config|
+        config.enabled = true
+      end
+    RUBY
+    ```
+  </Accordion>
+  <Accordion title="copy_file">
+    Copies a file from the generator's `source_root` to the destination path.
+
+    ```ruby
+    # Copies templates/service.rb to app/services/payment_service.rb
+    copy_file "service.rb", "app/services/#{file_name}_service.rb"
+    ```
+  </Accordion>
+  <Accordion title="template">
+    Copies a file from `source_root`, processing it as an ERB template. Generator instance variables and helper methods are available inside the template.
+
+    ```ruby
+    # templates/service.rb.tt
+    # class <%= class_name %>Service
+    #   def call
+    #   end
+    # end
+
+    template "service.rb.tt", "app/services/#{file_name}_service.rb"
+    ```
+  </Accordion>
+  <Accordion title="insert_into_file">
+    Injects content into an existing file, before or after a pattern.
+
+    ```ruby
+    insert_into_file "config/application.rb",
+      "    config.autoload_paths << Rails.root.join('app/services')\n",
+      after: "class Application < Rails::Application\n"
+    ```
+  </Accordion>
+  <Accordion title="gsub_file">
+    Replaces content in a file using a pattern.
+
+    ```ruby
+    gsub_file "config/routes.rb",
+      /# root "articles#index"/,
+      'root "home#index"'
+    ```
+  </Accordion>
+  <Accordion title="route">
+    Adds a line to `config/routes.rb`.
+
+    ```ruby
+    route "resources :payments"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Generator options and arguments
+
+### Arguments
+
+Use `argument` to declare positional arguments beyond the `NAME` provided by `NamedBase`:
+
+```ruby
+class ServiceGenerator < Rails::Generators::NamedBase
+  argument :actions, type: :array, default: [], banner: "action action"
+
+  def create_service_file
+    create_file "app/services/#{file_name}_service.rb", <<~RUBY
+      class #{class_name}Service
+        #{actions.map { |a| "def #{a}\n        end" }.join("\n\n        ")}
+      end
+    RUBY
+  end
+end
+```
+
+```bash
+$ bin/rails generate service payment charge refund
+```
+
+### Options
+
+Use `class_option` to declare named flags:
+
+```ruby
+class InitializerGenerator < Rails::Generators::NamedBase
+  class_option :scope, type: :string, default: "app",
+                       desc: "Scope for the initializer"
+  class_option :verbose, type: :boolean, default: false
+end
+```
+
+Access option values via `options`:
+
+```ruby
+def create_initializer_file
+  @scope = options["scope"]
+  template "initializer.rb.tt", "config/initializers/#{file_name}.rb"
+end
+```
+
+Invoke:
+
+```bash
+$ bin/rails generate initializer theme --scope dashboard
+```
+
+## Using templates
+
+Templates are ERB files stored in `source_root` (typically `lib/generators/my_generator/templates/`). They have access to all generator instance variables and helper methods.
+
+```
+lib/generators/
+└── service/
+    ├── service_generator.rb
+    ├── USAGE
+    └── templates/
+        └── service.rb.tt
+```
+
+```ruby
+# templates/service.rb.tt
+# frozen_string_literal: true
+
+class <%= class_name %>Service
+  def initialize
+  end
+
+  def call
+    raise NotImplementedError, "#{self.class}#call not implemented"
+  end
+end
+```
+
+```ruby
+# service_generator.rb
+class ServiceGenerator < Rails::Generators::NamedBase
+  source_root File.expand_path("templates", __dir__)
+
+  def create_service_file
+    template "service.rb.tt", "app/services/#{file_name}_service.rb"
+  end
+end
+```
+
+## Generator resolution order
+
+When you run `bin/rails generate initializer`, Rails searches for the generator in this order:
+
+1. `rails/generators/initializer/initializer_generator.rb`
+2. `generators/initializer/initializer_generator.rb`
+3. `rails/generators/initializer_generator.rb`
+4. `generators/initializer_generator.rb`
+
+The search covers all directories on `$LOAD_PATH`, including your app's `lib/` directory.
+
+## Overriding Rails generator templates
+
+You can override the templates used by built-in Rails generators without replacing the generator itself. Place a file with the same relative path under `lib/templates/`:
+
+```
+lib/templates/
+└── erb/
+    └── scaffold/
+        └── index.html.erb.tt
+```
+
+For example, to customize the scaffold index view:
+
+```erb
+<%%= @<%= plural_table_name %>.count %> <%= human_name.pluralize %>
+```
+
+<Note>
+Generator templates are ERB files that produce other ERB files. Escape `<%` sequences intended for the output file as `<%%`.
+</Note>
+
+Now the scaffold generator uses your template automatically:
+
+```bash
+$ bin/rails generate scaffold Post title:string
+#   create  app/views/posts/index.html.erb  (uses your template)
+```
+
+## Overriding Rails generators
+
+Use `config.generators` in `config/application.rb` to replace a built-in generator with your own:
+
+```ruby
+config.generators do |g|
+  g.helper :my_helper
+end
+```
+
+Create the replacement generator:
+
+```ruby
+# lib/generators/rails/my_helper/my_helper_generator.rb
+class Rails::MyHelperGenerator < Rails::Generators::NamedBase
+  def create_helper_file
+    create_file "app/helpers/#{file_name}_helper.rb", <<~RUBY
+      module #{class_name}Helper
+        # helpers go here
+      end
+    RUBY
+  end
+end
+```
+
+When the scaffold generator runs, it invokes your `my_helper` generator instead of the built-in `helper` generator:
+
+```bash
+$ bin/rails generate scaffold Article body:text
+      ...
+      invoke  my_helper
+      create    app/helpers/articles_helper.rb
+```
+
+## Generator hooks
+
+Generators can expose hooks so that other generators (such as test frameworks or template engines) can plug in. Use `hook_for` to declare a hook:
+
+```ruby
+class MyHelperGenerator < Rails::Generators::NamedBase
+  hook_for :test_framework, as: :helper
+end
+```
+
+This allows test frameworks registered via `config.generators` to generate test files when your helper generator is invoked.
+
+## Generator fallbacks
+
+Fallbacks let a generator namespace delegate missing generators to another namespace. This is useful when you want to replace only part of a generator suite.
+
+For example, replace only the `test_unit:model` generator while keeping all other `test_unit:*` generators intact:
+
+```ruby
+# lib/generators/my_test_unit/model/model_generator.rb
+module MyTestUnit
+  class ModelGenerator < Rails::Generators::NamedBase
+    source_root File.expand_path("templates", __dir__)
+
+    def do_different_stuff
+      say "Generating custom model test..."
+    end
+  end
+end
+```
+
+Configure the fallback in `config/application.rb`:
+
+```ruby
+config.generators do |g|
+  g.test_framework :my_test_unit, fixture: false
+  g.fallbacks[:my_test_unit] = :test_unit
+end
+```
+
+Now `my_test_unit:model` runs your custom generator, while `my_test_unit:controller`, `my_test_unit:helper`, and others fall back to the built-in `test_unit` versions:
+
+```bash
+$ bin/rails generate scaffold Comment body:text
+      invoke  active_record
+      create    app/models/comment.rb
+      invoke    my_test_unit          # your custom generator
+    Generating custom model test...
+      invoke  scaffold_controller
+      ...
+      invoke    my_test_unit          # falls back to test_unit for controller
+      create      test/controllers/comments_controller_test.rb
+```
+
+## Complete example: service generator
+
+<Steps>
+  <Step title="Generate the generator scaffold">
+    ```bash
+    $ bin/rails generate generator service
+    ```
+  </Step>
+  <Step title="Define the generator class">
+    ```ruby
+    # lib/generators/service/service_generator.rb
+    class ServiceGenerator < Rails::Generators::NamedBase
+      source_root File.expand_path("templates", __dir__)
+
+      class_option :skip_test, type: :boolean, default: false,
+                               desc: "Skip generating a test file"
+
+      def create_service_file
+        template "service.rb.tt", "app/services/#{file_name}_service.rb"
+      end
+
+      def create_test_file
+        return if options["skip_test"]
+        template "service_test.rb.tt",
+                 "test/services/#{file_name}_service_test.rb"
+      end
+    end
+    ```
+  </Step>
+  <Step title="Create the service template">
+    ```ruby
+    # lib/generators/service/templates/service.rb.tt
+    # frozen_string_literal: true
+
+    class <%= class_name %>Service
+      def initialize
+      end
+
+      def call
+        raise NotImplementedError, "#{self.class}#call not implemented"
+      end
+    end
+    ```
+  </Step>
+  <Step title="Create the test template">
+    ```ruby
+    # lib/generators/service/templates/service_test.rb.tt
+    # frozen_string_literal: true
+
+    require "test_helper"
+
+    class <%= class_name %>ServiceTest < ActiveSupport::TestCase
+      def test_call
+        # TODO: implement
+      end
+    end
+    ```
+  </Step>
+  <Step title="Run the generator">
+    ```bash
+    $ bin/rails generate service payment
+          create  app/services/payment_service.rb
+          create  test/services/payment_service_test.rb
+
+    $ bin/rails generate service payment --skip-test
+          create  app/services/payment_service.rb
+    ```
+  </Step>
+</Steps>
+
+## Testing generators
+
+Rails provides `Rails::Generators::Testing::Behavior` with a `run_generator` helper:
+
+```ruby
+# test/lib/generators/service_generator_test.rb
+require "test_helper"
+require "rails/generators/testing/behavior"
+require "rails/generators/testing/assertions"
+
+class ServiceGeneratorTest < Rails::TestCase
+  include Rails::Generators::Testing::Behavior
+  include Rails::Generators::Testing::Assertions
+
+  tests ServiceGenerator
+  destination File.expand_path("../tmp", __dir__)
+  setup :prepare_destination
+
+  test "generates service file" do
+    run_generator ["payment"]
+    assert_file "app/services/payment_service.rb",
+                /class PaymentService/
+  end
+
+  test "generates test file by default" do
+    run_generator ["payment"]
+    assert_file "test/services/payment_service_test.rb"
+  end
+
+  test "skips test file when --skip-test is passed" do
+    run_generator ["payment", "--skip-test"]
+    assert_no_file "test/services/payment_service_test.rb"
+  end
+end
+```
+
+Run generator tests with logging enabled for better debugging output:
+
+```bash
+$ RAILS_LOG_TO_STDOUT=true bin/test test/lib/generators/service_generator_test.rb
+```

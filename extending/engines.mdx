@@ -1,0 +1,398 @@
+---
+title: "Rails Engines"
+description: "Package reusable Rails functionality as a mountable miniature application that integrates cleanly into any host app."
+---
+
+Rails Engines let you encapsulate a discrete slice of application functionality—its own models, controllers, views, routes, and assets—and share it across multiple Rails applications. Every `Rails::Application` is itself an engine, so the same patterns you use in a full app apply inside an engine.
+
+<Note>
+The host application is always the final authority. Engines exist to serve the application, not to override or redefine its behavior.
+</Note>
+
+## What is an engine?
+
+An engine is a gem that inherits from `Rails::Engine`. It extends `Rails::Railtie` and adds support for routes, isolated namespaces, and autoload paths so you can ship complete Rails components.
+
+**Examples of engines in the wild:**
+
+<CardGroup cols={2}>
+  <Card title="Devise" icon="lock" href="https://github.com/heartcombo/devise">
+    Authentication for Rails applications.
+  </Card>
+  <Card title="Active Storage" icon="database" href="https://github.com/rails/rails/tree/main/activestorage">
+    File upload and cloud storage, shipped as a built-in engine.
+  </Card>
+  <Card title="Thredded" icon="comments" href="https://github.com/thredded/thredded">
+    Forum and messageboard functionality.
+  </Card>
+  <Card title="Action Text" icon="pen" href="https://github.com/rails/rails/tree/main/actiontext">
+    Rich-text editor, also a built-in Rails engine.
+  </Card>
+</CardGroup>
+
+## Inheritance hierarchy
+
+```
+Rails::Railtie          # Core hook into the Rails boot process
+  └── Rails::Engine     # Adds routes, namespaces, and load paths
+        └── Rails::Application  # Your host app
+```
+
+`Railtie` is the base building block. `Engine` adds everything needed to package a complete Rails component. `Application` is a superset of `Engine`—it coordinates boot, runs all engine initializers, and builds the middleware stack.
+
+## Engine types
+
+<Tabs>
+  <Tab title="--full">
+    Creates an engine with its own `app/` directory tree that **shares the host app's namespace**. Use this when your engine needs models, controllers, and views but doesn't need to be isolated from the host app.
+
+    ```bash
+    rails plugin new blorgh --full
+    ```
+  </Tab>
+  <Tab title="--mountable">
+    Creates a **fully isolated engine** with its own namespace. All classes, routes, and assets are prefixed with the engine's module name, preventing any collision with the host app.
+
+    ```bash
+    rails plugin new blorgh --mountable
+    ```
+
+    This is the recommended option when building a self-contained feature such as an admin panel, a blog, or an API module.
+  </Tab>
+</Tabs>
+
+## Generating an engine
+
+```bash
+$ rails plugin new blorgh --mountable
+```
+
+The `--mountable` flag:
+
+- Namespaces all controllers, routes, views, helpers, and assets under `Blorgh::`
+- Isolates routing so the engine can be mounted at any path in the host app
+- Automatically mounts the engine in the dummy test application at `test/dummy`
+
+## Directory structure
+
+```
+blorgh/
+├── app/
+│   ├── assets/stylesheets/blorgh/
+│   ├── controllers/blorgh/
+│   │   └── application_controller.rb
+│   ├── helpers/blorgh/
+│   ├── jobs/blorgh/
+│   ├── mailers/blorgh/
+│   ├── models/blorgh/
+│   │   └── application_record.rb
+│   └── views/layouts/blorgh/
+│       └── application.html.erb
+├── config/
+│   └── routes.rb
+├── lib/
+│   ├── blorgh/
+│   │   ├── engine.rb
+│   │   └── version.rb
+│   ├── blorgh.rb
+│   └── tasks/blorgh_tasks.rake
+├── test/
+│   └── dummy/          # Full Rails app for integration testing
+├── blorgh.gemspec
+└── Rakefile
+```
+
+### The engine entry point
+
+The gem entry point at `lib/blorgh.rb` requires the engine definition:
+
+```ruby
+# lib/blorgh.rb
+require "blorgh/engine"
+
+module Blorgh
+end
+```
+
+### The engine class
+
+`lib/blorgh/engine.rb` is the heart of the engine. It hooks the engine into Rails and, for mountable engines, isolates the namespace:
+
+```ruby
+# lib/blorgh/engine.rb
+module Blorgh
+  class Engine < ::Rails::Engine
+    isolate_namespace Blorgh
+  end
+end
+```
+
+`isolate_namespace Blorgh` ensures:
+
+- Models become `Blorgh::Article` with the table `blorgh_articles`
+- Controllers become `Blorgh::ArticlesController` with views in `app/views/blorgh/articles/`
+- Helpers, mailers, and jobs are all prefixed with `Blorgh::`
+- Engine routes stay isolated and don't bleed into the host app
+
+<Warning>
+Always keep `isolate_namespace` in the `Engine` class. Without it, the engine's constants can leak into the host application's namespace.
+</Warning>
+
+## Building engine functionality
+
+Inside the engine directory, use `bin/rails` exactly as you would in a regular app:
+
+```bash
+$ bin/rails generate scaffold article title:string text:text
+```
+
+Because `isolate_namespace` is active, this generates:
+
+- Migration: `db/migrate/<timestamp>_create_blorgh_articles.rb`
+- Model: `app/models/blorgh/article.rb` (`Blorgh::Article`)
+- Controller: `app/controllers/blorgh/articles_controller.rb`
+- Views: `app/views/blorgh/articles/`
+
+Engine routes are drawn on `Blorgh::Engine`, not on the host application:
+
+```ruby
+# config/routes.rb (inside the engine)
+Blorgh::Engine.routes.draw do
+  resources :articles
+  root to: "articles#index"
+end
+```
+
+## Mounting an engine in a host application
+
+<Steps>
+  <Step title="Add the gem to the host app's Gemfile">
+    For a published gem:
+
+    ```ruby
+    # Gemfile
+    gem "blorgh"
+    ```
+
+    During local development, reference it by path:
+
+    ```ruby
+    # Gemfile
+    gem "blorgh", path: "../blorgh"
+    ```
+
+    Then run:
+
+    ```bash
+    $ bundle install
+    ```
+  </Step>
+  <Step title="Mount the engine in config/routes.rb">
+    ```ruby
+    # config/routes.rb
+    Rails.application.routes.draw do
+      mount Blorgh::Engine, at: "/blog"
+    end
+    ```
+
+    The engine is now accessible at `http://localhost:3000/blog`.
+  </Step>
+  <Step title="Install engine migrations">
+    Copy the engine's migrations into the host application:
+
+    ```bash
+    $ bin/rails blorgh:install:migrations
+    ```
+
+    For multiple engines at once:
+
+    ```bash
+    $ bin/rails railties:install:migrations
+    ```
+  </Step>
+  <Step title="Run migrations">
+    ```bash
+    $ bin/rails db:migrate
+    ```
+
+    To run only one engine's migrations, use `SCOPE`:
+
+    ```bash
+    $ bin/rails db:migrate SCOPE=blorgh
+    ```
+
+    To revert:
+
+    ```bash
+    $ bin/rails db:migrate SCOPE=blorgh VERSION=0
+    ```
+  </Step>
+</Steps>
+
+## Overriding engine functionality in the host app
+
+The host application can reopen and extend engine models and controllers without modifying the engine's source code.
+
+### Setting up the overrides directory
+
+```ruby
+# config/application.rb
+module HostApplication
+  class Application < Rails::Application
+    overrides = Rails.root.join("app/overrides")
+    Rails.autoloaders.main.ignore(overrides)
+
+    config.to_prepare do
+      Dir.glob("#{overrides}/**/*_override.rb").sort.each do |override|
+        load override
+      end
+    end
+  end
+end
+```
+
+<Info>
+`to_prepare` reloads overrides on each request in development and once in production. `load` (not `require`) is used so files can be reloaded without restarting the server.
+</Info>
+
+### Reopening a model with `class_eval`
+
+```ruby
+# app/overrides/models/blorgh/article_override.rb
+Blorgh::Article.class_eval do
+  validates :title, presence: true, length: { minimum: 10 }
+end
+```
+
+<Warning>
+Use `class_eval` or `ActiveSupport::Concern`, not the `class` keyword. Using `class Blorgh::Article` would define a new constant rather than reopen the existing one.
+</Warning>
+
+### Reopening a model with `ActiveSupport::Concern`
+
+For more complex overrides that add multiple methods or callbacks:
+
+```ruby
+# app/overrides/models/blorgh/article_override.rb
+module BlorghArticleOverride
+  extend ActiveSupport::Concern
+
+  included do
+    validates :title, presence: true
+  end
+
+  def time_since_created
+    Time.current - created_at
+  end
+
+  def summary
+    "#{title} (overridden)"
+  end
+end
+
+Blorgh::Article.include(BlorghArticleOverride)
+```
+
+### Overriding views
+
+Rails looks in the host application's `app/views` directory before the engine's. To override a view, create a file at the same path inside the host app:
+
+```
+# Engine view (original)
+ENGINE/app/views/blorgh/articles/index.html.erb
+
+# Host app override
+HOST_APP/app/views/blorgh/articles/index.html.erb
+```
+
+### Inheriting from the host application's controller
+
+To give engine controllers access to host application helpers (such as `current_user`), change the engine's `ApplicationController` to inherit from the host app's:
+
+```ruby
+# app/controllers/blorgh/application_controller.rb
+module Blorgh
+  class ApplicationController < ::ApplicationController
+  end
+end
+```
+
+## Configuring the engine
+
+### Engine-level configuration
+
+Engines support the same `config/initializers` and `config/locales` directories as a full Rails application:
+
+```ruby
+# lib/blorgh/engine.rb
+module Blorgh
+  class Engine < ::Rails::Engine
+    isolate_namespace Blorgh
+
+    config.autoload_paths << File.expand_path("lib/some/path", __dir__)
+
+    initializer "blorgh.add_middleware" do |app|
+      app.middleware.use Blorgh::SomeMiddleware
+    end
+
+    config.generators do |g|
+      g.orm             :active_record
+      g.template_engine :erb
+      g.test_framework  :test_unit
+    end
+  end
+end
+```
+
+### Making the engine configurable
+
+Expose configuration via `mattr_accessor` in the engine's top-level module:
+
+```ruby
+# lib/blorgh.rb
+module Blorgh
+  mattr_accessor :author_class_name
+
+  def self.author_class
+    author_class_name.constantize
+  end
+end
+```
+
+The host application sets the configuration in an initializer:
+
+```ruby
+# config/initializers/blorgh.rb
+Blorgh.author_class_name = "User"
+```
+
+<Warning>
+Pass class names as strings (`"User"`), not as constants (`User`). Using a constant forces Rails to load the class before initialization is complete, which can cause errors if the table doesn't exist yet.
+</Warning>
+
+## Routing helpers inside an engine
+
+Because routes are isolated, the engine's routing helpers are scoped to the engine. Inside the engine, use `articles_path`. In the host app, prefix with the engine's route proxy:
+
+```ruby
+# Inside the engine
+articles_path   # => /articles (relative to mount point)
+
+# Inside the host app
+blorgh.articles_path   # => /blog/articles
+main_app.root_path     # => /  (access host app routes from engine)
+```
+
+## Custom path configuration
+
+You can remap where Rails looks for controllers, models, and other files:
+
+```ruby
+class MyEngine < Rails::Engine
+  # Load controllers from lib/controllers instead of app/controllers
+  paths["app/controllers"] = "lib/controllers"
+
+  # Load from both locations
+  paths["app/controllers"] << "lib/controllers"
+end
+```

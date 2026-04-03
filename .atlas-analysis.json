@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Ruby on Rails",
+  "projectType": "framework",
+  "projectName": "Ruby on Rails",
+  "projectDescription": "A full-stack MVC web application framework written in Ruby that provides conventions and components for building database-backed web applications.",
   "theme": "maple",
-  "colors": {
-    "primary": "#040404",
-    "light": "#d00808",
-    "dark": "#dc7c84"
-  },
-  "favicon": "https://media.brand.dev/e7be18b3-b632-4af8-91de-e37de4c3ad68.jpg",
-  "logo": {
-    "light": "https://media.brand.dev/15334dc0-0fce-432d-8170-a41720ce82ec.svg",
-    "dark": "https://media.brand.dev/15334dc0-0fce-432d-8170-a41720ce82ec.svg"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/rails/rails"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/rails/rails"
-    }
-  },
+  "primaryColor": "#040404",
+  "lightColor": "#d00808",
+  "darkColor": "#dc7c84",
   "navigation": {
     "tabs": [
       {
@@ -96,5 +79,37 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "MVC architecture with convention over configuration",
+    "Active Record ORM with migrations and associations",
+    "RESTful routing with resourceful conventions",
+    "Asset pipeline and JavaScript/CSS management",
+    "Background job processing via Active Job",
+    "WebSocket support via Action Cable",
+    "File upload/cloud storage via Active Storage",
+    "Rich text editing via Action Text",
+    "Email sending/receiving via Action Mailer/Mailbox",
+    "Rails engines for modular, mountable applications",
+    "Built-in testing framework with fixtures",
+    "Rails CLI with generators for scaffolding"
+  ],
+  "publicApiSurface": [
+    "ActiveRecord::Base",
+    "ActionController::Base",
+    "ActionView::Base",
+    "ActiveModel::Base",
+    "ActiveJob::Base",
+    "ActionMailer::Base",
+    "ActionCable::Channel::Base",
+    "ActiveStorage::Blob",
+    "Rails::Engine",
+    "Rails::Railtie",
+    "Rails::Application",
+    "ActionDispatch::Routing::Mapper",
+    "ActiveRecord::Migration",
+    "ActiveRecord::Schema",
+    "ActiveSupport::Concern",
+    "ActiveSupport::Callbacks"
+  ]
 }

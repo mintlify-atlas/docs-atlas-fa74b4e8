@@ -1,0 +1,582 @@
+---
+title: "Form Helpers"
+description: "How to build HTML forms in Rails using form_with, model-backed forms, nested attributes, and collection helpers."
+---
+
+Rails provides view helpers that generate HTML form markup, handle CSRF protection, name inputs for the `params` hash, and bind form fields to model objects. The main entry point is `form_with`.
+
+<CardGroup cols={2}>
+  <Card title="form_with" icon="square-terminal" href="#form_with">
+    The primary helper for building all forms
+  </Card>
+  <Card title="Model forms" icon="database" href="#model-backed-forms">
+    Bind a form to an Active Record object
+  </Card>
+  <Card title="Nested forms" icon="sitemap" href="#nested-forms">
+    Create or update associated records in a single form
+  </Card>
+  <Card title="Collections" icon="list" href="#collection-helpers">
+    Generate select boxes and radio buttons from model data
+  </Card>
+</CardGroup>
+
+## `form_with`
+
+`form_with` is the primary form helper. It yields a form builder object you use to generate all the form elements.
+
+```erb
+<%= form_with url: "/search", method: :get do |form| %>
+  <%= form.label :query, "Search for:" %>
+  <%= form.search_field :query %>
+  <%= form.submit "Search" %>
+<% end %>
+```
+
+Generated HTML:
+
+```html
+<form action="/search" accept-charset="UTF-8" method="get">
+  <label for="query">Search for:</label>
+  <input type="search" name="query" id="query">
+  <input type="submit" name="commit" value="Search" data-disable-with="Search">
+</form>
+```
+
+### CSRF protection
+
+For all non-GET forms, Rails automatically includes a hidden `authenticity_token` field. This token is verified server-side to prevent cross-site request forgery (CSRF) attacks.
+
+```html
+<form action="/articles" method="post">
+  <input type="hidden" name="authenticity_token"
+         value="Lz6ILqUEs2CGdDa..." autocomplete="off">
+  <!-- form fields -->
+</form>
+```
+
+<Note>
+You don't need to add this token manually. `form_with` includes it automatically for all non-GET forms. The CSRF protection is enabled by default via `protect_from_forgery` in `ApplicationController`.
+</Note>
+
+### PATCH, PUT, and DELETE
+
+HTML forms only support GET and POST. Rails works around this by injecting a hidden `_method` field:
+
+```erb
+<%= form_with url: article_path(@article), method: :patch do |form| %>
+  <!-- fields -->
+<% end %>
+```
+
+```html
+<form action="/articles/1" method="post">
+  <input type="hidden" name="_method" value="patch" autocomplete="off">
+  <input type="hidden" name="authenticity_token" value="..." autocomplete="off">
+  <!-- fields -->
+</form>
+```
+
+## Model-backed forms
+
+Pass a model object to `form_with` using the `model:` option. Rails infers the form action URL, HTTP method, and field name prefixes from the object.
+
+```erb
+<%= form_with model: @article do |form| %>
+  <div>
+    <%= form.label :title %>
+    <%= form.text_field :title %>
+  </div>
+  <div>
+    <%= form.label :body %>
+    <%= form.text_area :body %>
+  </div>
+  <%= form.submit %>
+<% end %>
+```
+
+Generated HTML for a new `@article`:
+
+```html
+<form action="/articles" accept-charset="UTF-8" method="post">
+  <input type="hidden" name="authenticity_token" value="..." autocomplete="off">
+  <div>
+    <label for="article_title">Title</label>
+    <input type="text" name="article[title]" id="article_title">
+  </div>
+  <div>
+    <label for="article_body">Body</label>
+    <textarea name="article[body]" id="article_body"></textarea>
+  </div>
+  <input type="submit" name="commit" value="Create Article" data-disable-with="Create Article">
+</form>
+```
+
+Key behaviors:
+
+- **New record** (`@article.persisted?` is `false`): action is `POST /articles`, submit reads "Create Article"
+- **Existing record** (`@article.persisted?` is `true`): action is `PATCH /articles/1`, submit reads "Update Article"
+- **Field values**: pre-populated from the model's current attribute values
+- **Field names**: scoped under `article[...]`, so params arrive as `params[:article]`
+
+### Namespaced resources
+
+For namespaced routes, pass an array:
+
+```ruby
+form_with model: [:admin, @article]
+# submits to admin_articles_path or admin_article_path(@article)
+```
+
+## Form input fields
+
+All form builder methods take the attribute name as the first argument. The name determines the key in `params`.
+
+<Tabs>
+  <Tab title="Text inputs">
+    ```erb
+    <%= form.text_field :name %>
+    <%= form.text_area :bio, rows: 5 %>
+    <%= form.password_field :password %>
+    <%= form.email_field :email %>
+    <%= form.url_field :website %>
+    <%= form.telephone_field :phone %>
+    <%= form.search_field :query %>
+    ```
+
+    ```html
+    <input type="text" name="person[name]" id="person_name">
+    <textarea name="person[bio]" id="person_bio" rows="5"></textarea>
+    <input type="password" name="person[password]" id="person_password">
+    <input type="email" name="person[email]" id="person_email">
+    <input type="url" name="person[website]" id="person_website">
+    <input type="tel" name="person[phone]" id="person_phone">
+    <input type="search" name="person[query]" id="person_query">
+    ```
+  </Tab>
+  <Tab title="Number and range">
+    ```erb
+    <%= form.number_field :price, in: 1.0..100.0, step: 0.5 %>
+    <%= form.range_field :discount, in: 0..50 %>
+    ```
+
+    ```html
+    <input type="number" step="0.5" min="1.0" max="100.0" name="person[price]" id="person_price">
+    <input type="range" min="0" max="50" name="person[discount]" id="person_discount">
+    ```
+  </Tab>
+  <Tab title="Other types">
+    ```erb
+    <%= form.hidden_field :token, value: "abc123" %>
+    <%= form.color_field :favorite_color %>
+    ```
+
+    ```html
+    <input type="hidden" name="person[token]" value="abc123" id="person_token" autocomplete="off">
+    <input type="color" name="person[favorite_color]" id="person_favorite_color">
+    ```
+  </Tab>
+</Tabs>
+
+### Checkboxes
+
+Each checkbox generates a hidden input alongside the visible checkbox. This ensures that an unchecked box still submits a value (`"0"`):
+
+```erb
+<%= form.checkbox :newsletter %>
+<%= form.label :newsletter, "Subscribe to newsletter" %>
+```
+
+```html
+<input name="person[newsletter]" type="hidden" value="0" autocomplete="off">
+<input type="checkbox" value="1" name="person[newsletter]" id="person_newsletter">
+<label for="person_newsletter">Subscribe to newsletter</label>
+```
+
+In `params`: `"1"` if checked, `"0"` if unchecked.
+
+### Radio buttons
+
+```erb
+<%= form.radio_button :role, "admin" %>
+<%= form.label :role_admin, "Admin" %>
+<%= form.radio_button :role, "editor" %>
+<%= form.label :role_editor, "Editor" %>
+```
+
+```html
+<input type="radio" value="admin" name="person[role]" id="person_role_admin">
+<label for="person_role_admin">Admin</label>
+<input type="radio" value="editor" name="person[role]" id="person_role_editor">
+<label for="person_role_editor">Editor</label>
+```
+
+`params[:person][:role]` will be either `"admin"` or `"editor"`.
+
+<Note>
+Always pair checkboxes and radio buttons with labels. The `for` attribute on the label expands the clickable area and improves accessibility.
+</Note>
+
+## Select boxes
+
+Use `form.select` to generate a `<select>` element:
+
+```erb
+<%= form.select :city, ["Berlin", "Chicago", "Madrid"] %>
+```
+
+Specify separate display labels and submitted values using nested arrays:
+
+```erb
+<%= form.select :city, [["Berlin", "BE"], ["Chicago", "CHI"], ["Madrid", "MD"]] %>
+```
+
+Set a default selection:
+
+```erb
+<%= form.select :city, [["Berlin", "BE"], ["Chicago", "CHI"]], selected: "CHI" %>
+```
+
+Group options with a hash:
+
+```erb
+<%= form.select :city,
+      {
+        "Europe" => [["Berlin", "BE"], ["Madrid", "MD"]],
+        "North America" => [["Chicago", "CHI"]]
+      },
+      selected: "CHI" %>
+```
+
+```html
+<select name="person[city]" id="person_city">
+  <optgroup label="Europe">
+    <option value="BE">Berlin</option>
+    <option value="MD">Madrid</option>
+  </optgroup>
+  <optgroup label="North America">
+    <option value="CHI" selected="selected">Chicago</option>
+  </optgroup>
+</select>
+```
+
+## Date and time fields
+
+### HTML5 date/time inputs
+
+These render native browser date/time pickers:
+
+```erb
+<%= form.date_field :born_on %>
+<%= form.time_field :started_at %>
+<%= form.datetime_local_field :published_at %>
+<%= form.month_field :billing_month %>
+<%= form.week_field :sprint_week %>
+```
+
+```html
+<input type="date" name="person[born_on]" id="person_born_on">
+<input type="time" name="person[started_at]" id="person_started_at">
+<input type="datetime-local" name="person[published_at]" id="person_published_at">
+```
+
+### Select-based date helpers
+
+`date_select` renders separate year, month, and day select boxes. Active Record reassembles these into a full date automatically:
+
+```erb
+<%= form.date_select :birth_date %>
+<%= form.time_select :meeting_time %>
+<%= form.datetime_select :published_at %>
+```
+
+### Time zone select
+
+```erb
+<%= form.time_zone_select :time_zone %>
+```
+
+This uses `ActiveSupport::TimeZone` to populate a full list of time zone options.
+
+## Collection helpers
+
+Collection helpers generate select boxes, radio buttons, or checkboxes from Active Record data without manual iteration.
+
+```ruby
+# Given these models
+class City < ApplicationRecord; end
+class Person < ApplicationRecord
+  belongs_to :city
+end
+```
+
+### `collection_select`
+
+```erb
+<%= form.collection_select :city_id, City.order(:name), :id, :name %>
+```
+
+Arguments: `attribute`, `collection`, `value_method`, `text_method`.
+
+```html
+<select name="person[city_id]" id="person_city_id">
+  <option value="1">Berlin</option>
+  <option value="3">Chicago</option>
+  <option value="2">Madrid</option>
+</select>
+```
+
+<Note>
+For `belongs_to` associations, use the foreign key attribute (`city_id`) rather than the association name (`city`).
+</Note>
+
+### `collection_radio_buttons`
+
+```erb
+<%= form.collection_radio_buttons :city_id, City.order(:name), :id, :name %>
+```
+
+```html
+<input type="radio" value="1" name="person[city_id]" id="person_city_id_1">
+<label for="person_city_id_1">Berlin</label>
+<input type="radio" value="3" name="person[city_id]" id="person_city_id_3">
+<label for="person_city_id_3">Chicago</label>
+```
+
+### `collection_checkboxes`
+
+For `has_and_belongs_to_many` or `has_many` associations:
+
+```erb
+<%= form.collection_checkboxes :interest_ids, Interest.order(:name), :id, :name %>
+```
+
+```html
+<input type="checkbox" name="person[interest_id][]" value="1" id="person_interest_id_1">
+<label for="person_interest_id_1">Engineering</label>
+<input type="checkbox" name="person[interest_id][]" value="2" id="person_interest_id_2">
+<label for="person_interest_id_2">Science</label>
+```
+
+## File uploads
+
+Use `file_field` to accept file uploads. Rails automatically sets `enctype="multipart/form-data"` when a `file_field` is present:
+
+```erb
+<%= form_with model: @person do |form| %>
+  <%= form.label :avatar, "Profile picture" %>
+  <%= form.file_field :avatar %>
+  <%= form.submit %>
+<% end %>
+```
+
+The uploaded file is available in the controller as an `ActionDispatch::Http::UploadedFile` object:
+
+```ruby
+def update
+  uploaded_file = params[:person][:avatar]
+  # uploaded_file.original_filename => "photo.jpg"
+  # uploaded_file.content_type      => "image/jpeg"
+  # uploaded_file.read              => file bytes
+end
+```
+
+<Tip>
+For storing images and files with Active Record models, use [Active Storage](https://guides.rubyonrails.org/active_storage_overview.html). It handles storage backends, image variants, and direct uploads.
+</Tip>
+
+## Nested forms
+
+Nested forms let you create or update associated records within the same form submission.
+
+### Model setup
+
+Use `accepts_nested_attributes_for` on the parent model:
+
+```ruby
+class Person < ApplicationRecord
+  has_many :addresses, inverse_of: :person
+  accepts_nested_attributes_for :addresses, allow_destroy: true
+end
+
+class Address < ApplicationRecord
+  belongs_to :person
+end
+```
+
+This adds an `addresses_attributes=` setter to `Person`.
+
+### View
+
+Use `fields_for` to render a nested form builder for the association:
+
+```html+erb
+<%= form_with model: @person do |form| %>
+  <%= form.text_field :name %>
+
+  <h3>Addresses</h3>
+  <%= form.fields_for :addresses do |address_form| %>
+    <div>
+      <%= address_form.label :kind %>
+      <%= address_form.text_field :kind %>
+
+      <%= address_form.label :street %>
+      <%= address_form.text_field :street %>
+
+      <%= address_form.label :city %>
+      <%= address_form.text_field :city %>
+
+      <%# Allow deletion of existing addresses %>
+      <% if address_form.object.persisted? %>
+        <%= address_form.label :_destroy, "Remove this address" %>
+        <%= address_form.checkbox :_destroy %>
+      <% end %>
+    </div>
+  <% end %>
+
+  <%= form.submit %>
+<% end %>
+```
+
+Build empty address records in the controller so the form shows fields for new records:
+
+```ruby
+def new
+  @person = Person.new
+  2.times { @person.addresses.build }
+end
+```
+
+### Permitting nested parameters
+
+Strong Parameters must permit nested attributes using a double-array syntax:
+
+```ruby
+def person_params
+  params.expect(person: [
+    :name,
+    addresses_attributes: [[:id, :kind, :street, :city, :_destroy]]
+  ])
+end
+```
+
+<Warning>
+Don't forget to permit `id` and `_destroy` in nested attributes. `id` is needed to identify existing records for update, and `_destroy` is needed for deletion when `allow_destroy: true` is set.
+</Warning>
+
+### Submitted params structure
+
+When the form submits, the `params` hash looks like:
+
+```ruby
+{
+  "person" => {
+    "name" => "Alice",
+    "addresses_attributes" => {
+      "0" => { "kind" => "Home", "street" => "123 Main St", "city" => "Portland" },
+      "1" => { "kind" => "Work", "street" => "456 Oak Ave", "city" => "Portland" }
+    }
+  }
+}
+```
+
+### Preventing empty records
+
+Use `:reject_if` to ignore blank attribute sets:
+
+```ruby
+accepts_nested_attributes_for :addresses,
+  reject_if: :all_blank,
+  allow_destroy: true
+```
+
+Pass `:all_blank` as a symbol or provide a lambda for custom logic:
+
+```ruby
+accepts_nested_attributes_for :addresses,
+  reject_if: lambda { |attrs| attrs[:street].blank? }
+```
+
+## Complete form example
+
+A full registration form illustrating common patterns:
+
+```html+erb
+<%= form_with model: @user do |form| %>
+  <%# Basic text fields %>
+  <div>
+    <%= form.label :name %>
+    <%= form.text_field :name, placeholder: "Full name" %>
+  </div>
+
+  <div>
+    <%= form.label :email %>
+    <%= form.email_field :email %>
+  </div>
+
+  <div>
+    <%= form.label :password %>
+    <%= form.password_field :password %>
+  </div>
+
+  <%# Select from a collection %>
+  <div>
+    <%= form.label :role %>
+    <%= form.select :role, [["Member", "member"], ["Admin", "admin"]], selected: "member" %>
+  </div>
+
+  <%# Checkbox %>
+  <div>
+    <%= form.checkbox :terms_accepted %>
+    <%= form.label :terms_accepted, "I agree to the terms of service" %>
+  </div>
+
+  <%# File upload %>
+  <div>
+    <%= form.label :avatar, "Profile picture" %>
+    <%= form.file_field :avatar, accept: "image/*" %>
+  </div>
+
+  <%= form.submit %>
+<% end %>
+```
+
+The corresponding strong parameters in the controller:
+
+```ruby
+def user_params
+  params.expect(user: [:name, :email, :password, :role, :terms_accepted, :avatar])
+end
+```
+
+## Forms for external resources
+
+To submit a form to an external URL with your own CSRF token:
+
+```erb
+<%= form_with url: "https://external.example.com/submit",
+              authenticity_token: "your_external_token" do |form| %>
+  <!-- fields -->
+<% end %>
+```
+
+To disable the authenticity token entirely (for external APIs that don't accept it):
+
+```erb
+<%= form_with url: "https://external.example.com/submit",
+              authenticity_token: false do |form| %>
+  <!-- fields -->
+<% end %>
+```
+
+## Params naming conventions
+
+How form input names map to the `params` hash:
+
+| Input name | `params` value |
+|------------|----------------|
+| `name="user[name]"` | `params[:user][:name]` |
+| `name="user[address][city]"` | `params[:user][:address][:city]` |
+| `name="user[phone_number][]"` | `params[:user][:phone_number]` (array) |
+| `name="user[role]"` | `params[:user][:role]` |
+
+Rails form helpers generate input names following these conventions automatically when you use model-backed forms or the `fields_for` helper with `:index`.

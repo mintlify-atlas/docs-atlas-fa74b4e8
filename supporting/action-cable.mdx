@@ -1,0 +1,392 @@
+---
+title: "Action Cable"
+description: "Add real-time WebSocket features to your Rails application with server-side channels and client-side JavaScript subscriptions."
+---
+
+Action Cable seamlessly integrates WebSockets with the rest of your Rails application. It's a full-stack offering that provides both a server-side Ruby framework and a client-side JavaScript framework, letting you write real-time features in the same style as the rest of your app while still being performant and scalable.
+
+<CardGroup cols={2}>
+  <Card title="Channels" icon="tower-broadcast">
+    Encapsulate logical units of real-time work, similar to controllers in MVC.
+  </Card>
+  <Card title="Pub/Sub Broadcasting" icon="rss">
+    Broadcast data to all channel subscribers instantly using `stream_from` and `broadcast`.
+  </Card>
+  <Card title="Connection Auth" icon="lock">
+    Authenticate WebSocket connections before they're established using cookies or tokens.
+  </Card>
+  <Card title="Full Domain Access" icon="database">
+    Use Active Record, Active Job, and all other Rails components inside your channels.
+  </Card>
+</CardGroup>
+
+## Terminology
+
+| Term | Description |
+|---|---|
+| **Connection** | One WebSocket connection per browser tab/device. The parent of all channel subscriptions. |
+| **Consumer** | The client-side entity. Created by the JavaScript framework. |
+| **Channel** | A logical unit of work—like a controller. One consumer can subscribe to many channels. |
+| **Subscriber** | A consumer that has subscribed to a channel. |
+| **Broadcasting** | A named pub/sub stream. Messages sent to a broadcasting are delivered to all subscribers. |
+
+## Server-Side Components
+
+### Connection Authentication
+
+The connection class handles authentication before any channel subscriptions are accepted. It lives in `app/channels/application_cable/connection.rb`:
+
+```ruby
+# app/channels/application_cable/connection.rb
+module ApplicationCable
+  class Connection < ActionCable::Connection::Base
+    identified_by :current_user
+
+    def connect
+      self.current_user = find_verified_user
+    end
+
+    private
+      def find_verified_user
+        if verified_user = User.find_by(id: cookies.encrypted[:user_id])
+          verified_user
+        else
+          reject_unauthorized_connection
+        end
+      end
+  end
+end
+```
+
+`identified_by` creates a connection identifier accessible in all channels. Calling `reject_unauthorized_connection` terminates the WebSocket handshake for unauthenticated requests.
+
+If you use session-based auth with a `_session` cookie:
+
+```ruby
+verified_user = User.find_by(id: cookies.encrypted["_session"]["user_id"])
+```
+
+### Exception Handling on Connections
+
+```ruby
+module ApplicationCable
+  class Connection < ActionCable::Connection::Base
+    rescue_from StandardError, with: :report_error
+
+    private
+      def report_error(e)
+        SomeExternalBugtrackingService.notify(e)
+      end
+  end
+end
+```
+
+### Channel Classes
+
+Channels inherit from `ApplicationCable::Channel` (which extends `ActionCable::Channel::Base`). Create a channel with the generator:
+
+```bash
+$ bin/rails generate channel chat
+```
+
+```ruby
+# app/channels/application_cable/channel.rb
+module ApplicationCable
+  class Channel < ActionCable::Channel::Base
+  end
+end
+```
+
+```ruby
+# app/channels/chat_channel.rb
+class ChatChannel < ApplicationCable::Channel
+  # Called when a consumer subscribes
+  def subscribed
+    stream_from "chat_#{params[:room]}"
+  end
+
+  # Called when a consumer unsubscribes
+  def unsubscribed
+    # cleanup
+  end
+end
+```
+
+### Streams
+
+Use `stream_from` to subscribe the channel to a named broadcasting:
+
+```ruby
+class ChatChannel < ApplicationCable::Channel
+  def subscribed
+    stream_from "chat_#{params[:room]}"
+  end
+end
+```
+
+For model-backed streams, use `stream_for` to automatically generate the broadcasting name from a GlobalID:
+
+```ruby
+class PostsChannel < ApplicationCable::Channel
+  def subscribed
+    post = Post.find(params[:id])
+    stream_for post
+  end
+end
+```
+
+### Channel Callbacks
+
+```ruby
+class ChatChannel < ApplicationCable::Channel
+  before_subscribe  :authenticate_user!
+  after_subscribe   :track_subscription
+  before_unsubscribe :log_unsubscribe
+  after_unsubscribe  :clean_up
+
+  def subscribed
+    stream_from "chat_#{params[:room]}"
+  end
+
+  private
+    def authenticate_user!
+      reject unless current_user
+    end
+
+    def track_subscription
+      Rails.logger.info "#{current_user.name} subscribed to #{params[:room]}"
+    end
+end
+```
+
+Available callbacks: `before_subscribe`, `after_subscribe` (aliased as `on_subscribe`), `before_unsubscribe`, `after_unsubscribe` (aliased as `on_unsubscribe`).
+
+## Client-Side Components
+
+### Creating a Consumer
+
+Rails generates a consumer file automatically. It connects to `/cable` on the server:
+
+```javascript
+// app/javascript/channels/consumer.js
+import { createConsumer } from "@rails/actioncable"
+
+export default createConsumer()
+```
+
+Connect to a custom URL or add authentication tokens:
+
+```javascript
+// Static URL
+createConsumer("wss://example.com/cable")
+
+// Dynamic URL with a token
+createConsumer(() => {
+  const token = localStorage.get("auth-token")
+  return `wss://example.com/cable?token=${token}`
+})
+```
+
+### Creating a Subscription
+
+A consumer becomes a subscriber by creating a subscription:
+
+```javascript
+// app/javascript/channels/chat_channel.js
+import consumer from "./consumer"
+
+const chatChannel = consumer.subscriptions.create(
+  { channel: "ChatChannel", room: "Best Room" },
+  {
+    connected() {
+      console.log("Connected to ChatChannel")
+    },
+
+    disconnected() {
+      console.log("Disconnected")
+    },
+
+    received(data) {
+      // Handle incoming data
+      const messages = document.getElementById("messages")
+      messages.insertAdjacentHTML("beforeend", data.html)
+    }
+  }
+)
+```
+
+A consumer can subscribe to the same channel multiple times (e.g., multiple chat rooms):
+
+```javascript
+consumer.subscriptions.create({ channel: "ChatChannel", room: "Room 1" })
+consumer.subscriptions.create({ channel: "ChatChannel", room: "Room 2" })
+```
+
+## Broadcasting
+
+### Broadcasting to a Named Stream
+
+From anywhere in your Rails application (controller, job, model, etc.):
+
+```ruby
+# Broadcast to all subscribers of "chat_Best Room"
+ActionCable.server.broadcast("chat_Best Room", { body: "Hello, room!" })
+```
+
+### Broadcasting to a Model-Backed Stream
+
+```ruby
+# Broadcast to all subscribers of the PostsChannel for @post
+PostsChannel.broadcast_to(@post, { comment: @comment.body })
+```
+
+### Broadcasting from a Controller
+
+```ruby
+class MessagesController < ApplicationController
+  def create
+    @message = Message.create!(message_params)
+    ActionCable.server.broadcast(
+      "chat_#{@message.room_id}",
+      { html: render_to_string(partial: "message", locals: { message: @message }) }
+    )
+    head :ok
+  end
+end
+```
+
+<Note>
+  Broadcastings are time-dependent. Consumers that are not currently subscribed will not receive messages sent while they were offline.
+</Note>
+
+## Complete Chat Example
+
+<Steps>
+  <Step title="Generate the channel">
+    ```bash
+    $ bin/rails generate channel Chat
+    ```
+  </Step>
+
+  <Step title="Server-side channel">
+    ```ruby
+    # app/channels/chat_channel.rb
+    class ChatChannel < ApplicationCable::Channel
+      def subscribed
+        stream_from "chat_#{params[:room]}"
+      end
+
+      def unsubscribed
+        # No cleanup needed for broadcasts
+      end
+
+      def speak(data)
+        Message.create!(
+          content: data["message"],
+          room_id: params[:room],
+          user: current_user
+        )
+      end
+    end
+    ```
+  </Step>
+
+  <Step title="Broadcast on model save">
+    ```ruby
+    # app/models/message.rb
+    class Message < ApplicationRecord
+      after_create_commit :broadcast_to_room
+
+      private
+        def broadcast_to_room
+          ActionCable.server.broadcast(
+            "chat_#{room_id}",
+            {
+              html: ApplicationController.render(
+                partial: "messages/message",
+                locals: { message: self }
+              )
+            }
+          )
+        end
+    end
+    ```
+  </Step>
+
+  <Step title="Client-side subscription">
+    ```javascript
+    // app/javascript/channels/chat_channel.js
+    import consumer from "./consumer"
+
+    const roomId = document.getElementById("chat").dataset.roomId
+
+    const subscription = consumer.subscriptions.create(
+      { channel: "ChatChannel", room: roomId },
+      {
+        received(data) {
+          document.getElementById("messages")
+            .insertAdjacentHTML("beforeend", data.html)
+        },
+
+        speak(message) {
+          this.perform("speak", { message })
+        }
+      }
+    )
+
+    document.getElementById("message-form").addEventListener("submit", (e) => {
+      e.preventDefault()
+      const input = document.getElementById("message-input")
+      subscription.speak(input.value)
+      input.value = ""
+    })
+    ```
+  </Step>
+</Steps>
+
+## Sending Data from Client to Server
+
+The client can invoke public methods on the channel by calling `perform`:
+
+```javascript
+// Client sends data to server
+subscription.perform("speak", { message: "Hello!" })
+```
+
+```ruby
+# Server receives it in a public method
+class ChatChannel < ApplicationCable::Channel
+  def speak(data)
+    ActionCable.server.broadcast("chat_general", { body: data["message"] })
+  end
+end
+```
+
+## Connection Callbacks
+
+The connection object provides callbacks for command-level events:
+
+- `before_command` — runs before processing a subscribe, unsubscribe, or perform command
+- `after_command` — runs after processing a command
+- `around_command` — wraps command processing
+
+## Deployment Considerations
+
+<Info>
+  Action Cable can run in the same process as your Rails app (using the async adapter in development) or as a separate server. The default adapter in production uses Redis for broadcasting across multiple processes.
+</Info>
+
+Configure the cable adapter in `config/cable.yml`:
+
+```yaml
+development:
+  adapter: async
+
+test:
+  adapter: test
+
+production:
+  adapter: redis
+  url: <%= ENV.fetch("REDIS_URL") { "redis://localhost:6379/1" } %>
+  channel_prefix: your_app_production
+```

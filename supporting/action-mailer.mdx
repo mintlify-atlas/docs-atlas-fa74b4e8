@@ -1,0 +1,415 @@
+---
+title: "Action Mailer"
+description: "Compose and deliver email from your Rails application using mailer classes and view templates."
+---
+
+Action Mailer lets you send emails from your Rails application using classes (called mailers) and view templates—the same patterns you use for controllers and views. Mailers inherit from `ActionMailer::Base` and have actions with corresponding views in `app/views`.
+
+<CardGroup cols={2}>
+  <Card title="Mailer Classes" icon="envelope">
+    Define email actions as methods, set headers, attach files, and render templates.
+  </Card>
+  <Card title="HTML & Text Templates" icon="file-code">
+    Automatically sends multipart emails when both `.html.erb` and `.text.erb` templates exist.
+  </Card>
+  <Card title="deliver_later" icon="clock">
+    Sends email asynchronously via Active Job so requests aren't blocked.
+  </Card>
+  <Card title="Email Previews" icon="eye">
+    Render and inspect emails in the browser at `/rails/mailers` without sending them.
+  </Card>
+</CardGroup>
+
+## Creating a Mailer
+
+<Steps>
+  <Step title="Generate the mailer">
+    ```bash
+    $ bin/rails generate mailer User
+    create  app/mailers/user_mailer.rb
+    invoke  erb
+    create    app/views/user_mailer
+    invoke  test_unit
+    create    test/mailers/user_mailer_test.rb
+    create    test/mailers/previews/user_mailer_preview.rb
+    ```
+
+    Generate with a specific action pre-defined:
+
+    ```bash
+    $ bin/rails generate mailer User welcome_email
+    ```
+  </Step>
+
+  <Step title="Define a mailer action">
+    The generated mailer inherits from `ApplicationMailer`. Add methods (actions) to send specific emails:
+
+    ```ruby
+    # app/mailers/application_mailer.rb
+    class ApplicationMailer < ActionMailer::Base
+      default from: "from@example.com"
+      layout "mailer"
+    end
+    ```
+
+    ```ruby
+    # app/mailers/user_mailer.rb
+    class UserMailer < ApplicationMailer
+      default from: "notifications@example.com"
+
+      def welcome_email
+        @user = params[:user]
+        @url  = "http://example.com/login"
+        mail(to: @user.email_address, subject: "Welcome to My Awesome Site")
+      end
+    end
+    ```
+
+    Instance variables set in the action (`@user`, `@url`) are accessible in the email templates.
+  </Step>
+
+  <Step title="Create email templates">
+    Create matching templates in `app/views/user_mailer/`. Action Mailer automatically sends a `multipart/alternative` email when both an HTML and text template exist.
+
+    **HTML template** — `app/views/user_mailer/welcome_email.html.erb`:
+
+    ```html
+    <h1>Welcome to example.com, <%= @user.name %></h1>
+    <p>
+      You have successfully signed up. Your username is: <%= @user.login %>
+    </p>
+    <p>
+      To log in, follow this link: <%= link_to 'login', login_url %>.
+    </p>
+    ```
+
+    **Text template** — `app/views/user_mailer/welcome_email.text.erb`:
+
+    ```
+    Welcome to example.com, <%= @user.name %>
+    ===============================================
+
+    You have successfully signed up.
+    Your username is: <%= @user.login %>.
+
+    To log in: <%= @url %>
+    ```
+  </Step>
+
+  <Step title="Send the email">
+    Call the mailer from a controller or background job:
+
+    ```ruby
+    # app/controllers/users_controller.rb
+    def create
+      @user = User.new(user_params)
+      if @user.save
+        # Enqueue via Active Job—doesn't block the request
+        UserMailer.with(user: @user).welcome_email.deliver_later
+        redirect_to user_url(@user), notice: "User was successfully created."
+      else
+        render :new, status: :unprocessable_entity
+      end
+    end
+    ```
+  </Step>
+</Steps>
+
+## deliver_now vs deliver_later
+
+<Tabs>
+  <Tab title="deliver_later (recommended)">
+    Enqueues the email via Active Job. The controller returns immediately without waiting for SMTP.
+
+    ```ruby
+    UserMailer.with(user: @user).welcome_email.deliver_later
+    ```
+
+    Schedule delivery at a specific time:
+
+    ```ruby
+    UserMailer.with(user: @user).welcome_email
+              .deliver_later(wait_until: Date.tomorrow.noon)
+    ```
+  </Tab>
+  <Tab title="deliver_now">
+    Sends the email synchronously in the current thread. Useful for cron jobs or scripts.
+
+    ```ruby
+    User.find_each do |user|
+      UserMailer.with(user: user).weekly_summary.deliver_now
+    end
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Using `.deliver_later` from a Rake task may silently drop emails—the Rake process can exit before the background threads finish. Use `.deliver_now` in Rake tasks instead.
+</Note>
+
+## Configuring Mail Delivery
+
+<Tabs>
+  <Tab title="SMTP (Gmail example)">
+    Add to `config/environments/production.rb`:
+
+    ```ruby
+    config.action_mailer.delivery_method = :smtp
+    config.action_mailer.smtp_settings = {
+      address:         "smtp.gmail.com",
+      port:            587,
+      domain:          "example.com",
+      user_name:       Rails.app.credentials.dig(:smtp, :user_name),
+      password:        Rails.app.credentials.dig(:smtp, :password),
+      authentication:  "plain",
+      enable_starttls: true,
+      open_timeout:    5,
+      read_timeout:    5
+    }
+    ```
+  </Tab>
+  <Tab title="Sendmail">
+    ```ruby
+    config.action_mailer.delivery_method = :sendmail
+    config.action_mailer.perform_deliveries = true
+    config.action_mailer.raise_delivery_errors = true
+    config.action_mailer.default_options = { from: "no-reply@example.com" }
+    ```
+  </Tab>
+  <Tab title="Per-action override">
+    Override SMTP credentials for a specific mailer action using `delivery_method_options`:
+
+    ```ruby
+    def welcome_email
+      @user = params[:user]
+      delivery_options = {
+        user_name: params[:company].smtp_user,
+        password:  params[:company].smtp_password,
+        address:   params[:company].smtp_host
+      }
+      mail(
+        to:                      @user.email_address,
+        subject:                 "Welcome",
+        delivery_method_options: delivery_options
+      )
+    end
+    ```
+  </Tab>
+</Tabs>
+
+Set the host for URL helpers (required since mailers have no request context):
+
+```ruby
+# config/application.rb
+config.action_mailer.default_url_options = { host: "example.com" }
+```
+
+<Warning>
+  Always use `*_url` helpers (not `*_path`) in email templates. Email clients have no base URL, so relative paths produce broken links.
+</Warning>
+
+## Attachments
+
+Add a file attachment in a mailer action:
+
+```ruby
+def invoice_email
+  @user = params[:user]
+
+  # Action Mailer detects MIME type and encoding automatically
+  attachments["invoice.pdf"] = File.read("/path/to/invoice.pdf")
+
+  mail(to: @user.email_address, subject: "Your Invoice")
+end
+```
+
+For inline attachments (images embedded in the email body):
+
+```ruby
+def photo_email
+  attachments.inline["photo.jpg"] = File.read("/path/to/photo.jpg")
+  mail(to: params[:user].email_address, subject: "Your Photo")
+end
+```
+
+Reference the inline image in the HTML template:
+
+```html
+<p>Here is your photo:</p>
+<%= image_tag attachments["photo.jpg"].url %>
+```
+
+## Email Previews
+
+Previews let you render emails in the browser without actually sending them.
+
+Create a preview class in `test/mailers/previews/`:
+
+```ruby
+# test/mailers/previews/user_mailer_preview.rb
+class UserMailerPreview < ActionMailer::Preview
+  def welcome_email
+    UserMailer.with(user: User.first).welcome_email
+  end
+end
+```
+
+Visit the preview at:
+- **Single email**: `http://localhost:3000/rails/mailers/user_mailer/welcome_email`
+- **All previews**: `http://localhost:3000/rails/mailers`
+
+The preview updates automatically when you change the mailer or template. Add custom preview directories in `config/application.rb`:
+
+```ruby
+config.action_mailer.preview_paths << "#{Rails.root}/lib/mailer_previews"
+```
+
+## Callbacks
+
+Action Mailer supports callbacks to configure messages and control delivery.
+
+### Action Callbacks
+
+Run before/after the mailer action renders the email:
+
+```ruby
+class InvitationsMailer < ApplicationMailer
+  before_action :set_inviter_and_invitee
+  before_action { @account = params[:inviter].account }
+
+  default to:       -> { @invitee.email_address },
+          from:     -> { common_address(@inviter) },
+          reply_to: -> { @inviter.email_address_with_name }
+
+  def account_invitation
+    mail subject: "#{@inviter.name} invited you to #{@account.name}"
+  end
+
+  private
+    def set_inviter_and_invitee
+      @inviter = params[:inviter]
+      @invitee = params[:invitee]
+    end
+end
+```
+
+### Deliver Callbacks
+
+Run before/after the email is handed off to the delivery agent:
+
+```ruby
+class UserMailer < ApplicationMailer
+  before_deliver :sandbox_staging
+  after_deliver  :mark_delivered
+
+  def feedback_message
+    @feedback = params[:feedback]
+    mail(to: params[:user].email_address, subject: "Feedback")
+  end
+
+  private
+    def sandbox_staging
+      # Redirect all outgoing mail in staging
+      message.to = ["sandbox@example.com"] if Rails.env.staging?
+    end
+
+    def mark_delivered
+      params[:feedback].touch(:delivered_at)
+    end
+end
+```
+
+### Available Callbacks (in order of execution)
+
+| Callback | When it runs |
+|---|---|
+| `before_action` | Before the mailer action renders |
+| `around_action` | Wraps the action |
+| `after_action` | After the action renders, before delivery |
+| `before_deliver` | Before handing off to the delivery agent |
+| `around_deliver` | Wraps the delivery |
+| `after_deliver` | After the email is sent |
+
+## Interceptors and Observers
+
+### Interceptors
+
+Modify emails before they are sent. Useful for redirecting all email in staging environments:
+
+```ruby
+# app/mailers/sandbox_email_interceptor.rb
+class SandboxEmailInterceptor
+  def self.delivering_email(message)
+    message.to = ["sandbox@example.com"]
+  end
+end
+```
+
+Register the interceptor in an initializer:
+
+```ruby
+# config/initializers/mail_interceptors.rb
+Rails.application.configure do
+  if Rails.env.staging?
+    config.action_mailer.interceptors = %w[SandboxEmailInterceptor]
+  end
+end
+```
+
+### Observers
+
+Receive a callback after emails are delivered. Useful for logging:
+
+```ruby
+# app/mailers/email_delivery_observer.rb
+class EmailDeliveryObserver
+  def self.delivered_email(message)
+    EmailDelivery.log(message)
+  end
+end
+```
+
+```ruby
+# config/initializers/mail_observers.rb
+Rails.application.configure do
+  config.action_mailer.observers = %w[EmailDeliveryObserver]
+end
+```
+
+<Tip>
+  For richer context (access to the full mailer instance, params, and action name), prefer `after_deliver` callbacks over observers. Observers only receive the `Mail::Message` object.
+</Tip>
+
+## Sending to Multiple Recipients
+
+```ruby
+class AdminMailer < ApplicationMailer
+  default to:   -> { Admin.pluck(:email_address) },
+          from: "notification@example.com"
+
+  def new_registration(user)
+    @user = user
+    mail(subject: "New User Signup: #{@user.email_address}")
+  end
+end
+```
+
+Pass arrays or comma-separated strings to `:to`, `:cc`, and `:bcc`.
+
+## Display Names
+
+```ruby
+def welcome_email
+  @user = params[:user]
+  mail(
+    to:      email_address_with_name(@user.email_address, @user.name),
+    subject: "Welcome to My Awesome Site"
+  )
+end
+```
+
+```ruby
+class UserMailer < ApplicationMailer
+  default from: email_address_with_name("notification@example.com", "Example Company")
+end
+```

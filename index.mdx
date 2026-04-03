@@ -1,97 +1,88 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Ruby on Rails Documentation"
+description: "The full-stack MVC web application framework written in Ruby. Build database-backed web applications faster with conventions over configuration."
 ---
 
-## Setting up
+Ruby on Rails is a web application framework that includes everything needed to create database-backed web applications according to the Model-View-Controller (MVC) pattern. Rails is designed to make programming web applications easier by making assumptions about what every developer needs to get started.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Get Started" icon="rocket" href="/getting-started">
+    Install Rails and build your first application from scratch in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="MVC Architecture" icon="diagram-project" href="/mvc-architecture">
+    Understand how Models, Views, and Controllers work together in Rails.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Active Record" icon="database" href="/active-record/basics">
+    Learn Rails' powerful ORM for database-backed models and querying.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Routing" icon="route" href="/core-concepts/routing">
+    Map HTTP requests to controller actions using Rails' router.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## The Rails Way
 
-Everything you need to create world-class documentation.
+Rails is built on two guiding principles that shape everything you build:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+- **Convention Over Configuration** — Rails has opinions about the best way to do many things and defaults to those conventions, so you spend less time on boilerplate and more time on your application.
+- **Don't Repeat Yourself (DRY)** — Every piece of knowledge lives in a single, unambiguous place. Less duplication means more maintainable, extensible code.
 
-## Need inspiration?
+## What's included
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+Rails is a monorepo containing multiple independent frameworks that work together seamlessly:
+
+<CardGroup cols={2}>
+  <Card title="Action Pack" icon="bolt" href="/action-pack/action-controller">
+    Controllers, routing, and request/response handling via Action Controller and Action Dispatch.
+  </Card>
+  <Card title="Action View" icon="eye" href="/action-pack/action-view">
+    Templates, helpers, and view rendering for generating HTML responses.
+  </Card>
+  <Card title="Active Job" icon="briefcase" href="/supporting/active-job">
+    Declare background jobs and run them on a variety of queuing backends.
+  </Card>
+  <Card title="Action Mailer" icon="envelope" href="/supporting/action-mailer">
+    Generate and send emails from your Rails application.
+  </Card>
+  <Card title="Action Cable" icon="plug" href="/supporting/action-cable">
+    Integrate WebSockets for real-time features like chat and notifications.
+  </Card>
+  <Card title="Active Storage" icon="cloud" href="/supporting/active-storage">
+    Attach cloud and local files to your Active Record models.
+  </Card>
+</CardGroup>
+
+## Quick install
+
+<Steps>
+  <Step title="Install Ruby">
+    Rails requires Ruby 3.2 or later. Install it via [rbenv](https://github.com/rbenv/rbenv) or [RVM](https://rvm.io).
+
+    ```bash
+    ruby --version
+    # => ruby 3.2.0 or later
+    ```
+  </Step>
+  <Step title="Install Rails">
+    ```bash
+    gem install rails
+    ```
+  </Step>
+  <Step title="Create a new application">
+    ```bash
+    rails new myapp
+    cd myapp
+    ```
+  </Step>
+  <Step title="Start the server">
+    ```bash
+    bin/rails server
+    ```
+
+    Visit `http://localhost:3000` to see your Rails app running.
+  </Step>
+</Steps>
+
+<Tip>
+  Follow the [Getting Started guide](/getting-started) for a complete walkthrough of building your first Rails application, including database setup, scaffolding, and deployment.
+</Tip>

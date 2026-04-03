@@ -1,0 +1,465 @@
+---
+title: "Active Record Validations"
+description: "Ensure only valid data is saved to the database using Active Record's built-in and custom validations."
+---
+
+Validations ensure that only valid data is saved to the database. Model-level validations are the best approach: they work with any database, cannot be bypassed by end users, and are easy to test and maintain.
+
+```ruby
+class Person < ApplicationRecord
+  validates :name, presence: true
+end
+
+Person.new(name: "John Doe").valid?  # => true
+Person.new(name: nil).valid?         # => false
+```
+
+## When validations run
+
+Validations are triggered by the following methods:
+
+| Triggers validations | Skips validations |
+|---------------------|-------------------|
+| `create` | `insert` / `insert!` / `insert_all` |
+| `create!` | `update_all` |
+| `save` | `update_attribute` / `update_column` / `update_columns` |
+| `save!` | `toggle!` / `touch` |
+| `update` | `decrement!` / `increment!` |
+| `update!` | `save(validate: false)` |
+
+The bang versions (`save!`, `create!`, `update!`) raise `ActiveRecord::RecordInvalid` when the record is invalid. The non-bang versions return `false` for `save`/`update`, and return the object (which may have errors) for `create`.
+
+## Checking validity
+
+Use `valid?` and `invalid?` to check a record without saving:
+
+```ruby
+person = Person.new
+person.valid?    # runs validations, returns false
+person.invalid?  # inverse of valid?
+```
+
+After `save` or `valid?`, validation failures are accessible via `errors`:
+
+```ruby
+person = Person.new
+person.valid?
+# => false
+
+person.errors.objects.first.full_message
+# => "Name can't be blank"
+
+person.save!
+# => ActiveRecord::RecordInvalid: Validation failed: Name can't be blank
+```
+
+Access errors per attribute:
+
+```ruby
+person = Person.create
+person.errors[:name]
+# => ["can't be blank"]
+
+person.errors[:name].any?
+# => true
+```
+
+<Note>
+An object instantiated with `new` will not report errors even if it is technically invalid, because validations run automatically only when saving.
+</Note>
+
+## Built-in validators
+
+### `presence`
+
+Validates that the specified attributes are not empty (not `nil` or blank string):
+
+```ruby
+class Person < ApplicationRecord
+  validates :name, :login, :email, presence: true
+end
+```
+
+Default error message: _"can't be blank"_.
+
+To validate that an association is present, validate the association object (not the foreign key):
+
+```ruby
+class Supplier < ApplicationRecord
+  has_one :account
+  validates :account, presence: true
+end
+```
+
+### `uniqueness`
+
+Validates that the attribute value is unique before saving:
+
+```ruby
+class Account < ApplicationRecord
+  validates :email, uniqueness: true
+end
+```
+
+Use `:scope` to limit the uniqueness check to a subset of records:
+
+```ruby
+class Holiday < ApplicationRecord
+  validates :name, uniqueness: { scope: :year,
+    message: "should happen once per year" }
+end
+```
+
+<Warning>
+This validation does not create a uniqueness constraint in the database. To prevent race conditions, add a unique index via a migration: `add_index :accounts, :email, unique: true`.
+</Warning>
+
+Default error message: _"has already been taken"_.
+
+### `length`
+
+Validates the length of an attribute's value:
+
+```ruby
+class Person < ApplicationRecord
+  validates :name, length: { minimum: 2 }
+  validates :bio, length: { maximum: 500 }
+  validates :password, length: { in: 6..20 }
+  validates :registration_number, length: { is: 6 }
+end
+```
+
+| Option | Description |
+|--------|-------------|
+| `:minimum` | Cannot be shorter than this length |
+| `:maximum` | Cannot be longer than this length |
+| `:in` | Must be within this range |
+| `:is` | Must be exactly this length |
+
+Custom error messages with `%{count}` placeholder:
+
+```ruby
+validates :bio, length: { maximum: 1000,
+  too_long: "%{count} characters is the maximum allowed" }
+```
+
+### `numericality`
+
+Validates that attributes have only numeric values:
+
+```ruby
+class Player < ApplicationRecord
+  validates :points, numericality: true
+  validates :games_played, numericality: { only_integer: true }
+end
+```
+
+| Option | Default error message |
+|--------|----------------------|
+| `:only_integer` | "must be an integer" |
+| `:greater_than` | "must be greater than %{count}" |
+| `:greater_than_or_equal_to` | "must be greater than or equal to %{count}" |
+| `:equal_to` | "must be equal to %{count}" |
+| `:less_than` | "must be less than %{count}" |
+| `:less_than_or_equal_to` | "must be less than or equal to %{count}" |
+| `:other_than` | "must be other than %{count}" |
+| `:odd` | "must be odd" |
+| `:even` | "must be even" |
+
+Default error message (no options): _"is not a number"_.
+
+### `format`
+
+Validates that an attribute matches a regular expression:
+
+```ruby
+class Product < ApplicationRecord
+  validates :legacy_code, format: { with: /\A[a-zA-Z]+\z/,
+    message: "only allows letters" }
+end
+```
+
+<Warning>
+Use `\A` and `\z` to match the start and end of the string. Using `^` and `$` matches start/end of a line, which can lead to security issues.
+</Warning>
+
+Default error message: _"is invalid"_.
+
+### `inclusion` and `exclusion`
+
+Validate whether a value is included in or excluded from a given set:
+
+```ruby
+# inclusion — value must be in the set
+class Coffee < ApplicationRecord
+  validates :size, inclusion: { in: %w(small medium large),
+    message: "%{value} is not a valid size" }
+end
+
+# exclusion — value must not be in the set
+class Account < ApplicationRecord
+  validates :subdomain, exclusion: { in: %w(www us ca jp),
+    message: "%{value} is reserved." }
+end
+```
+
+The set can be any enumerable object, including a proc or lambda:
+
+```ruby
+class Coffee < ApplicationRecord
+  validates :size, inclusion: { in: ->(coffee) { coffee.available_sizes } }
+end
+```
+
+### `acceptance`
+
+Validates that a checkbox was checked (e.g., terms of service):
+
+```ruby
+class Person < ApplicationRecord
+  validates :terms_of_service, acceptance: true
+  validates :eula, acceptance: { accept: ["TRUE", "accepted"] }
+end
+```
+
+This validation does not need a database column — if the field doesn't exist, a virtual attribute is created. Default error message: _"must be accepted"_.
+
+### `confirmation`
+
+Validates that two fields receive exactly the same content (e.g., email confirmation):
+
+```ruby
+class Person < ApplicationRecord
+  validates :email, confirmation: true
+  validates :email_confirmation, presence: true, if: :email_changed?
+end
+```
+
+This creates a virtual `email_confirmation` attribute. Default error message: _"doesn't match confirmation"_.
+
+### `comparison`
+
+Validates a comparison between two values:
+
+```ruby
+class Promotion < ApplicationRecord
+  validates :end_date, comparison: { greater_than: :start_date }
+end
+```
+
+### `absence`
+
+Validates that the attribute is absent (nil or blank):
+
+```ruby
+class Person < ApplicationRecord
+  validates :phone_number, :address, absence: true, if: :invited?
+end
+```
+
+Default error message: _"must be blank"_.
+
+### `validates_associated`
+
+Validates associated objects whenever the model is saved:
+
+```ruby
+class Library < ApplicationRecord
+  has_many :books
+  validates_associated :books
+end
+```
+
+<Warning>
+Do not use `validates_associated` on both ends of an association — they would call each other in an infinite loop.
+</Warning>
+
+## Validation options
+
+All validators accept these common options:
+
+| Option | Description |
+|--------|-------------|
+| `:allow_nil` | Skip validation if the value is `nil` |
+| `:allow_blank` | Skip validation if the value is blank |
+| `:message` | Custom error message (string or Proc) |
+| `:on` | Context when to run: `:create`, `:update`, or a custom symbol |
+| `:if` | Only run the validation if the condition is true |
+| `:unless` | Skip the validation if the condition is true |
+| `:strict` | Raise `ActiveModel::StrictValidationFailed` instead of adding to errors |
+
+### `:on` — when to run
+
+```ruby
+class Person < ApplicationRecord
+  validates :email, uniqueness: true, on: :create   # only on create
+  validates :age, numericality: true, on: :update    # only on update
+  validates :name, presence: true                    # both (default)
+end
+```
+
+## Conditional validations
+
+Run validations only under certain conditions:
+
+```ruby
+# Using a symbol (method name)
+class Order < ApplicationRecord
+  validates :card_number, presence: true, if: :paid_with_card?
+
+  def paid_with_card?
+    payment_type == "card"
+  end
+end
+
+# Using a Proc
+class Account < ApplicationRecord
+  validates :password, confirmation: true,
+    unless: -> { password.blank? }
+end
+```
+
+Group multiple validations under a single condition using `with_options`:
+
+```ruby
+class User < ApplicationRecord
+  with_options if: :is_admin? do |admin|
+    admin.validates :password, length: { minimum: 10 }
+    admin.validates :email, presence: true
+  end
+end
+```
+
+## Custom validations
+
+### Custom validator class
+
+Inherit from `ActiveModel::Validator` and implement `validate`:
+
+```ruby
+class MyValidator < ActiveModel::Validator
+  def validate(record)
+    unless record.name.start_with?("X")
+      record.errors.add :name, "Provide a name starting with X, please!"
+    end
+  end
+end
+
+class Person < ApplicationRecord
+  validates_with MyValidator
+end
+```
+
+### Custom `EachValidator`
+
+For validating individual attributes, inherit from `ActiveModel::EachValidator`:
+
+```ruby
+class EmailValidator < ActiveModel::EachValidator
+  def validate_each(record, attribute, value)
+    unless URI::MailTo::EMAIL_REGEXP.match?(value)
+      record.errors.add attribute, (options[:message] || "is not an email")
+    end
+  end
+end
+
+class Person < ApplicationRecord
+  validates :email, presence: true, email: true
+end
+```
+
+### Custom validation methods
+
+Register instance methods as validators using `validate`:
+
+```ruby
+class Invoice < ApplicationRecord
+  validate :expiration_date_cannot_be_in_the_past,
+           :discount_cannot_be_greater_than_total_value
+
+  def expiration_date_cannot_be_in_the_past
+    if expiration_date.present? && expiration_date < Date.today
+      errors.add(:expiration_date, "can't be in the past")
+    end
+  end
+
+  def discount_cannot_be_greater_than_total_value
+    if discount > total_value
+      errors.add(:discount, "can't be greater than total value")
+    end
+  end
+end
+```
+
+Run a custom method only on create or update:
+
+```ruby
+class Invoice < ApplicationRecord
+  validate :active_customer, on: :create
+
+  def active_customer
+    errors.add(:customer_id, "is not active") unless customer.active?
+  end
+end
+```
+
+## Working with validation errors
+
+```ruby
+person = Person.new
+person.valid?
+
+# All error messages as an array of strings
+person.errors.full_messages
+# => ["Name can't be blank", "Email is invalid"]
+
+# Errors for a specific attribute
+person.errors[:name]
+# => ["can't be blank"]
+
+# Add a custom error manually
+errors.add(:name, :too_short, message: "is not long enough")
+```
+
+### Displaying errors in views
+
+```erb
+<% if @person.errors.any? %>
+  <ul>
+    <% @person.errors.full_messages.each do |message| %>
+      <li><%= message %></li>
+    <% end %>
+  </ul>
+<% end %>
+```
+
+## Strict validations
+
+Raise an exception immediately when validation fails, instead of adding to the errors collection:
+
+```ruby
+class Person < ApplicationRecord
+  validates :name, presence: { strict: true }
+end
+
+Person.new.valid?
+# => ActiveModel::StrictValidationFailed: Name can't be blank
+```
+
+Pass a custom exception class to `:strict`:
+
+```ruby
+class Person < ApplicationRecord
+  validates :token, presence: true, uniqueness: true, strict: TokenGenerationException
+end
+```
+
+## Listing validators
+
+```ruby
+Person.validators
+# Returns all validators on the Person model
+
+Person.validators_on(:name)
+# Returns validators for a specific attribute
+```

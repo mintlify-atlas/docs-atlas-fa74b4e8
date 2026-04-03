@@ -1,0 +1,431 @@
+---
+title: "Active Record Query Interface"
+description: "Query the database using Active Record's expressive Ruby API instead of raw SQL."
+---
+
+Active Record insulates you from the need to use SQL in most cases. It performs queries on your behalf and is compatible with MySQL, MariaDB, PostgreSQL, and SQLite. The method format is always the same regardless of which database you use.
+
+<Info>
+Finder methods that return a collection (like `where` and `group`) return an `ActiveRecord::Relation`. Methods that find a single entity (like `find` and `first`) return a single model instance.
+</Info>
+
+## Retrieving a single object
+
+### `find`
+
+Retrieves the object corresponding to the specified primary key. Raises `ActiveRecord::RecordNotFound` if no match is found.
+
+```ruby
+# Find the customer with primary key (id) 10
+customer = Customer.find(10)
+# => #<Customer id: 10, first_name: "Ryan">
+```
+
+```sql
+SELECT * FROM customers WHERE (customers.id = 10) LIMIT 1
+```
+
+You can also pass an array of primary keys:
+
+```ruby
+customers = Customer.find([1, 10])
+# => [#<Customer id: 1, ...>, #<Customer id: 10, ...>]
+```
+
+### `take`
+
+Retrieves a record without any implicit ordering. Returns `nil` if no record is found (no exception raised).
+
+```ruby
+customer = Customer.take
+# => #<Customer id: 1, first_name: "Lifo">
+```
+
+```sql
+SELECT * FROM customers LIMIT 1
+```
+
+### `first`
+
+Finds the first record ordered by primary key. Returns `nil` if no match (use `first!` to raise instead).
+
+```ruby
+customer = Customer.first
+# => #<Customer id: 1, first_name: "Lifo">
+
+customers = Customer.first(3)  # returns up to 3 records
+```
+
+### `last`
+
+Finds the last record ordered by primary key. Returns `nil` if no match (use `last!` to raise instead).
+
+```ruby
+customer = Customer.last
+# => #<Customer id: 221, first_name: "Russel">
+```
+
+### `find_by`
+
+Finds the first record matching the given conditions. Returns `nil` if no match (use `find_by!` to raise `ActiveRecord::RecordNotFound` instead).
+
+```ruby
+Customer.find_by(first_name: "Lifo")
+# => #<Customer id: 1, first_name: "Lifo">
+
+Customer.find_by(first_name: "Jon")
+# => nil
+```
+
+```sql
+SELECT * FROM customers WHERE (customers.first_name = 'Lifo') LIMIT 1
+```
+
+## Conditions with `where`
+
+The `where` method specifies conditions to limit returned records, representing the `WHERE` part of the SQL statement.
+
+<Tabs>
+  <Tab title="Hash conditions">
+    The most readable form. Only equality, range, and subset checking are possible.
+
+    ```ruby
+    # Equality
+    Book.where(out_of_print: true)
+
+    # Range (generates BETWEEN)
+    Book.where(created_at: (Time.now.midnight - 1.day)..Time.now.midnight)
+
+    # Subset (generates IN)
+    Customer.where(orders_count: [1, 3, 5])
+    ```
+  </Tab>
+  <Tab title="Array conditions">
+    Use `?` placeholders to safely escape user-supplied values:
+
+    ```ruby
+    Book.where("title = ?", params[:title])
+
+    Book.where("title = ? AND out_of_print = ?", params[:title], false)
+
+    # Named placeholders for readability
+    Book.where("created_at >= :start_date AND created_at <= :end_date",
+      { start_date: params[:start_date], end_date: params[:end_date] })
+    ```
+
+    <Warning>
+    Never interpolate variables directly into condition strings: `Book.where("title = #{params[:title]}")` is vulnerable to SQL injection.
+    </Warning>
+  </Tab>
+  <Tab title="NOT / OR / AND">
+    ```ruby
+    # NOT
+    Customer.where.not(orders_count: [1, 3, 5])
+
+    # OR
+    Customer.where(last_name: "Smith").or(Customer.where(orders_count: [1, 3, 5]))
+
+    # AND (chain)
+    Customer.where(last_name: "Smith").where(orders_count: [1, 3, 5])
+
+    # AND (intersection)
+    Customer.where(id: [1, 2]).and(Customer.where(id: [2, 3]))
+    ```
+  </Tab>
+</Tabs>
+
+## Ordering
+
+```ruby
+# Ascending (default)
+Book.order(:created_at)
+Book.order(created_at: :asc)
+
+# Descending
+Book.order(created_at: :desc)
+
+# Multiple columns
+Book.order(title: :asc, created_at: :desc)
+
+# From a joined table
+Book.includes(:author).order(books: { print_year: :desc }, authors: { name: :asc })
+```
+
+## Selecting specific fields
+
+By default `Model.find` selects all fields (`SELECT *`). Use `select` to retrieve a subset:
+
+```ruby
+Book.select(:isbn, :out_of_print)
+# SELECT isbn, out_of_print FROM books
+
+# Unique values only
+Customer.select(:last_name).distinct
+# SELECT DISTINCT last_name FROM customers
+```
+
+<Warning>
+Accessing an attribute that was not selected will raise `ActiveModel::MissingAttributeError`.
+</Warning>
+
+## Limit and offset
+
+```ruby
+Customer.limit(5)
+# SELECT * FROM customers LIMIT 5
+
+Customer.limit(5).offset(30)
+# SELECT * FROM customers LIMIT 5 OFFSET 30
+```
+
+## Grouping
+
+```ruby
+Order.select("created_at").group("created_at")
+
+# Count per group
+Order.group(:status).count
+# => {"being_packed"=>7, "shipped"=>12}
+
+# HAVING clause
+Order.select("created_at as ordered_date, sum(total) as total_price")
+     .group("created_at")
+     .having("sum(total) > ?", 200)
+```
+
+## Joins
+
+Active Record provides `joins` (INNER JOIN) and `left_outer_joins` (LEFT OUTER JOIN).
+
+```ruby
+# Single association — returns books that have at least one review
+Book.joins(:reviews)
+
+# Multiple associations
+Book.joins(:author, :reviews)
+
+# Nested association
+Book.joins(reviews: :customer)
+
+# Conditions on joined tables
+Customer.joins(:orders).where(orders: { created_at: 1.day.ago.. })
+
+# LEFT OUTER JOIN — returns all records including those without matches
+Customer.left_outer_joins(:reviews).distinct
+        .select("customers.*, COUNT(reviews.*) AS reviews_count")
+        .group("customers.id")
+```
+
+### `where.associated` and `where.missing`
+
+```ruby
+# Customers who have at least one review
+Customer.where.associated(:reviews)
+
+# Customers who have no reviews
+Customer.where.missing(:reviews)
+```
+
+## Eager loading (N+1 prevention)
+
+Loading associations lazily causes an N+1 query problem:
+
+```ruby
+# 1 query for books + 10 queries for authors = 11 total
+books = Book.limit(10)
+books.each { |book| puts book.author.last_name }
+```
+
+Use eager loading to solve this:
+
+<Tabs>
+  <Tab title="includes">
+    Active Record picks the best strategy (separate queries or JOIN) and ensures all associations are loaded with the minimum possible number of queries.
+
+    ```ruby
+    # 2 queries total
+    books = Book.includes(:author).limit(10)
+    books.each { |book| puts book.author.last_name }
+    ```
+
+    Multiple associations:
+
+    ```ruby
+    Customer.includes(:orders, :reviews)
+
+    # Nested
+    Customer.includes(orders: { books: [:supplier, :author] }).find(1)
+    ```
+  </Tab>
+  <Tab title="preload">
+    Always uses separate queries — one per association:
+
+    ```ruby
+    books = Book.preload(:author).limit(10)
+    ```
+  </Tab>
+  <Tab title="eager_load">
+    Always uses a single `LEFT OUTER JOIN` query:
+
+    ```ruby
+    books = Book.eager_load(:author).limit(10)
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Use `strict_loading` to raise an error if an association is lazily loaded, helping you catch N+1 issues early:
+
+```ruby
+user = User.strict_loading.first
+user.address.city  # raises ActiveRecord::StrictLoadingViolationError
+```
+</Tip>
+
+## Scopes
+
+Scopes define reusable query fragments as named methods on the model. They always return an `ActiveRecord::Relation`.
+
+```ruby
+class Book < ApplicationRecord
+  scope :out_of_print, -> { where(out_of_print: true) }
+  scope :costs_more_than, ->(amount) { where("price > ?", amount) }
+  scope :out_of_print_and_expensive, -> { out_of_print.where("price > 500") }
+end
+```
+
+Call scopes on the class or on associations:
+
+```ruby
+Book.out_of_print
+# => #<ActiveRecord::Relation> # all out-of-print books
+
+author.books.out_of_print
+# => #<ActiveRecord::Relation> # all out-of-print books by this author
+
+Book.costs_more_than(100.10)
+```
+
+Scopes are chainable:
+
+```ruby
+Book.out_of_print.costs_more_than(100)
+```
+
+### Default scope
+
+```ruby
+class Book < ApplicationRecord
+  default_scope { where(out_of_print: false) }
+end
+```
+
+Remove default scope when needed:
+
+```ruby
+Book.unscoped.all
+# SELECT * FROM books  (no WHERE clause)
+```
+
+### Enums
+
+An enum maps an attribute to a set of named integer values and generates scopes and instance methods automatically:
+
+```ruby
+class Order < ApplicationRecord
+  enum :status, [:shipped, :being_packaged, :complete, :cancelled]
+end
+
+Order.shipped             # scope: all shipped orders
+order.shipped?            # predicate method
+order.shipped!            # update status to :shipped
+```
+
+## Calculations
+
+Calculation methods work on a model or a relation:
+
+```ruby
+Customer.count
+# SELECT COUNT(*) FROM customers
+
+Customer.where(first_name: "Ryan").count
+# SELECT COUNT(*) FROM customers WHERE (first_name = 'Ryan')
+
+Order.average("subtotal")
+Order.minimum("subtotal")
+Order.maximum("subtotal")
+Order.sum("subtotal")
+```
+
+### `pluck`
+
+Extract column values directly into a Ruby array without instantiating model objects:
+
+```ruby
+Book.where(out_of_print: true).pluck(:id)
+# SELECT id FROM books WHERE out_of_print = true
+# => [1, 2, 3]
+
+Customer.pluck(:id, :first_name)
+# => [[1, "David"], [2, "Fran"], [3, "Jose"]]
+```
+
+### `exists?`
+
+Check whether a matching record exists:
+
+```ruby
+Customer.exists?(1)
+Customer.exists?(id: [1, 2, 3])
+Customer.where(first_name: "Ryan").exists?
+```
+
+## Batch processing large datasets
+
+Loading all records into memory at once is impractical for large tables. Use batch methods instead:
+
+```ruby
+# Yields each record individually (default batch_size: 1000)
+Customer.find_each do |customer|
+  NewsMailer.weekly(customer).deliver_now
+end
+
+# Custom batch size and range
+Customer.find_each(batch_size: 5000, start: 2000, finish: 10000) do |customer|
+  NewsMailer.weekly(customer).deliver_now
+end
+
+# Yields an array of records per batch
+Customer.find_in_batches do |customers|
+  export.add_customers(customers)
+end
+```
+
+## Method chaining
+
+Active Record methods return `ActiveRecord::Relation` objects, allowing them to be chained. The query is sent to the database only when the data is actually needed.
+
+```ruby
+Customer
+  .select("customers.id, customers.last_name, reviews.body")
+  .joins(:reviews)
+  .where("reviews.created_at > ?", 1.week.ago)
+```
+
+```sql
+SELECT customers.id, customers.last_name, reviews.body
+FROM customers
+INNER JOIN reviews ON reviews.customer_id = customers.id
+WHERE (reviews.created_at > '2019-01-08')
+```
+
+## Find or build
+
+```ruby
+# Find or create — creates if not found
+Customer.find_or_create_by(first_name: "Andy")
+
+# Find or initialize — builds in memory but does not save
+Customer.find_or_initialize_by(first_name: "Nina")
+```

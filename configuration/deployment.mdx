@@ -1,0 +1,355 @@
+---
+title: "Deploying Rails Applications"
+description: "A practical guide to deploying Rails applications to production, including asset precompilation, database migrations, Kamal, and performance tuning."
+---
+
+This guide covers the steps to take a Rails application from development to a production deployment, including performance considerations for your application server.
+
+## Production Checklist
+
+Before deploying, confirm the following:
+
+- `SECRET_KEY_BASE` or a credentials master key is available in the environment
+- Database connection credentials are set via environment variables or encrypted credentials
+- Assets are precompiled and available
+- Pending database migrations have been run
+- `config.force_ssl` or `config.assume_ssl` is configured appropriately
+- `config.hosts` is configured with your production domain
+- `RAILS_LOG_LEVEL` is set (defaults to `"info"`)
+
+## Deployment with Kamal
+
+Rails includes [Kamal](https://kamal-deploy.org), a deployment tool that uses Docker containers and deploys with zero downtime. Rails generates a production-ready `Dockerfile` and a `config/deploy.yml` by default.
+
+<Steps>
+  <Step title="Provision a server">
+    You need a server running Ubuntu LTS with at least 1 GB of RAM. Providers such as Hetzner and DigitalOcean are commonly used. Kamal will install Docker and all dependencies automatically on first setup.
+  </Step>
+
+  <Step title="Create a Docker Hub repository">
+    Kamal pushes your Docker image to a registry so it can be pulled onto the server. Create a repository at [hub.docker.com](https://hub.docker.com/repository/create) for your application image.
+  </Step>
+
+  <Step title="Configure config/deploy.yml">
+    Edit `config/deploy.yml` to set your server IP and Docker Hub username:
+
+    ```yaml
+    # config/deploy.yml
+    service: myapp
+    image: your-dockerhub-user/myapp
+
+    servers:
+      web:
+        - 192.168.0.1   # Replace with your server's IP address
+
+    registry:
+      username: your-dockerhub-user
+    ```
+
+    To enable SSL via Let's Encrypt, add a `proxy` section with your domain:
+
+    ```yaml
+    proxy:
+      ssl: true
+      host: app.example.com
+    ```
+  </Step>
+
+  <Step title="Set your Docker registry credentials">
+    Create a Docker Hub access token with Read & Write permissions, then export it so Kamal can find it:
+
+    ```bash
+    export KAMAL_REGISTRY_PASSWORD=your-access-token
+    ```
+  </Step>
+
+  <Step title="Run kamal setup for the first deploy">
+    This command bootstraps the server, installs Docker, pushes your Docker image, and starts the application:
+
+    ```bash
+    bin/kamal setup
+    ```
+
+    Your application is now live. Navigate to your server's IP address to verify.
+  </Step>
+
+  <Step title="Deploy subsequent changes">
+    After making changes to your application, deploy them with:
+
+    ```bash
+    bin/kamal deploy
+    ```
+
+    Kamal performs a zero-downtime deployment by starting new containers before stopping the old ones.
+  </Step>
+</Steps>
+
+<Note>
+The default Rails `Dockerfile` uses [Thruster](https://github.com/basecamp/thruster) to compress and serve assets efficiently in production alongside your Rails application.
+</Note>
+
+## Asset Precompilation
+
+Before deploying, compile your application's assets:
+
+```bash
+bin/rails assets:precompile
+```
+
+This writes compiled, fingerprinted assets to `public/assets/`. The fingerprints are SHA256 digests appended to filenames, enabling far-future cache headers.
+
+In the default `Dockerfile`, asset precompilation runs as part of the Docker image build step, so you do not need to run it manually when using Kamal.
+
+<Accordion title="Asset configuration options">
+| Option | Description |
+|---|---|
+| `config.assets.precompile` | Add additional files to compile beyond `application.css` and `application.js` |
+| `config.assets.prefix` | Directory prefix for compiled assets; defaults to `/assets` |
+| `config.assets.digest` | Append SHA256 fingerprints to filenames; defaults to `true` |
+| `config.assets.gzip` | Also generate gzipped versions; defaults to `true` |
+
+```ruby
+# config/application.rb — precompile additional files
+config.assets.precompile += %w[admin.js admin.css]
+```
+</Accordion>
+
+## Database Migrations in Production
+
+Run pending migrations before (or as part of) each deploy:
+
+```bash
+bin/rails db:migrate RAILS_ENV=production
+```
+
+<Warning>
+Always take a database backup before running migrations in production. Migrations that drop columns or tables cannot be automatically reversed.
+</Warning>
+
+When using Kamal, you can run migrations via the Kamal console or as a deploy hook. For example, create `.kamal/hooks/pre-deploy` to run migrations before traffic switches to the new container.
+
+Open a production Rails console via Kamal at any time:
+
+```bash
+bin/kamal console
+```
+
+## Environment Variables in Production
+
+Rails reads several environment variables at boot time:
+
+| Variable | Purpose |
+|---|---|
+| `RAILS_ENV` | Sets the environment; defaults to `"development"` |
+| `RAILS_MASTER_KEY` | Decrypts `config/credentials.yml.enc` and environment credentials |
+| `RAILS_LOG_LEVEL` | Sets log verbosity; defaults to `"info"` in production |
+| `RAILS_MAX_THREADS` | Number of threads Puma uses per worker; defaults to `3` |
+| `WEB_CONCURRENCY` | Number of Puma worker processes; set to `auto` to match CPU count |
+| `DATABASE_URL` | Full database connection URL, used by Active Record |
+| `PORT` | Port Puma listens on; defaults to `3000` |
+| `PIDFILE` | Path for Puma's PID file |
+| `SOLID_QUEUE_IN_PUMA` | Set to `true` to run Solid Queue inside the Puma process |
+
+Access Rails credentials securely:
+
+```ruby
+# Store secrets with: bin/rails credentials:edit
+Rails.application.credentials.secret_api_key
+Rails.application.credentials.dig(:smtp, :user_name)
+```
+
+## Puma Configuration
+
+Puma is Rails' default application server. Its configuration lives in `config/puma.rb`:
+
+```ruby
+# config/puma.rb
+
+# Number of threads per worker process
+# Control via RAILS_MAX_THREADS; default is 3
+threads ENV.fetch("RAILS_MAX_THREADS", 3)
+
+# Port to listen on
+port ENV.fetch("PORT", 3000)
+
+# Allow `bin/rails restart` to restart Puma
+plugin :tmp_restart
+
+# Run Solid Queue inside Puma for single-server deployments
+plugin :solid_queue if ENV["SOLID_QUEUE_IN_PUMA"]
+
+# Write a PID file only if requested
+pidfile ENV["PIDFILE"] if ENV["PIDFILE"]
+```
+
+Set the number of worker processes with `WEB_CONCURRENCY`:
+
+```bash
+# Automatically match the number of CPU cores
+WEB_CONCURRENCY=auto bin/rails server
+
+# Use 4 workers explicitly
+WEB_CONCURRENCY=4 bin/rails server
+```
+
+## Performance Tuning
+
+Rails applications running on CRuby (MRI) have specific tuning knobs due to the Global VM Lock (GVL). The GVL prevents multiple threads from executing Ruby code simultaneously, so true CPU parallelism requires multiple processes.
+
+<Accordion title="Threads vs. processes">
+**Threads** are cheap on memory but share a single CPU core. Multiple threads allow concurrent handling of I/O-bound work (database queries, external HTTP calls) but do not provide parallelism for CPU-bound work.
+
+**Processes** achieve true parallelism across CPU cores. Each additional process uses more memory than a thread but can fully utilize an additional core.
+
+**Rule of thumb from the Rails tuning guide:**
+- A well-crafted Rails app that is not I/O-heavy is unlikely to benefit from more than 3 threads per process.
+- For throughput: run one process per CPU core and tune threads.
+- For low latency: keep threads per process low (even 1 thread per process with 1.3–1.5 processes per core).
+
+```bash
+# Example: 4 CPU cores, optimize for throughput
+WEB_CONCURRENCY=4 RAILS_MAX_THREADS=3 bin/rails server
+```
+</Accordion>
+
+<Accordion title="YJIT">
+Rails enables YJIT (Ruby's Just-In-Time compiler) automatically in non-local environments on Ruby 3.3+ since Rails 7.2. YJIT significantly improves throughput at the cost of some additional memory.
+
+```ruby
+# Disable if memory is critically constrained
+config.yjit = false
+
+# Pass YJIT options as a hash
+config.yjit = { stats: true }
+```
+
+| Rails version | Default |
+|---|---|
+| 7.2+ | `true` |
+| 8.1+ | `!Rails.env.local?` (disabled in development/test) |
+</Accordion>
+
+<Accordion title="Memory allocator (jemalloc)">
+The default system memory allocator on Linux can cause memory fragmentation under multi-threaded Puma workloads, increasing RSS over time. The Rails-generated `Dockerfile` installs and enables `jemalloc` by default to mitigate this.
+
+If you cannot use jemalloc, a less effective alternative is:
+
+```bash
+MALLOC_ARENA_MAX=2 bin/rails server
+```
+
+Note that `MALLOC_ARENA_MAX=2` may reduce performance and is not a substitute for jemalloc.
+</Accordion>
+
+<Accordion title="Connection pool sizing">
+The Active Record connection pool defaults to `5` connections. In a multi-threaded Puma setup, the pool must be at least as large as the number of threads per process:
+
+```yaml
+# config/database.yml
+production:
+  adapter: postgresql
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+```
+
+If you see `ActiveRecord::ConnectionTimeoutError`, increase the pool size.
+</Accordion>
+
+## Performance Testing
+
+Before finalizing your Puma configuration, test your application under realistic load.
+
+<Steps>
+  <Step title="Choose a load testing tool">
+    Use a dedicated load testing program to send concurrent requests and measure throughput and latency. Do not rely on Rails log timing alone — it only measures Rails processing time, not total request time including the application server.
+  </Step>
+
+  <Step title="Warm up before measuring">
+    Your application starts slowly and reaches steady-state performance after processing a number of initial requests. Always include a warmup phase and discard those measurements.
+
+    The warmup period is sufficient when increasing warmup iterations no longer changes the results significantly.
+  </Step>
+
+  <Step title="Measure the right metrics">
+    Focus on:
+
+    - **Throughput** — requests per second
+    - **P50 latency** — median response time
+    - **P95 / P99 latency** — tail latency experienced by the slowest requests
+
+    Average latency is not a reliable optimization target. Use percentile latencies.
+  </Step>
+
+  <Step title="Vary threads and workers">
+    Test with different combinations of `RAILS_MAX_THREADS` and `WEB_CONCURRENCY`. Increasing threads improves throughput up to a point, then hurts latency due to GVL contention.
+
+    ```bash
+    # Test with 2 threads
+    RAILS_MAX_THREADS=2 WEB_CONCURRENCY=4 bin/rails server
+
+    # Test with 5 threads
+    RAILS_MAX_THREADS=5 WEB_CONCURRENCY=4 bin/rails server
+    ```
+  </Step>
+
+  <Step title="Use production-equivalent hardware">
+    Always test on the same type of host that will run in production. Results on a development machine only reflect that machine's characteristics.
+  </Step>
+</Steps>
+
+## Health Check Endpoint
+
+Rails provides a built-in health check endpoint at `/up` that returns HTTP 200 when the application has booted successfully. Configure your load balancer or container orchestrator to poll this endpoint.
+
+```ruby
+# config/environments/production.rb
+
+# Silence health check logs to prevent log noise
+config.silence_healthcheck_path = "/up"
+
+# Exclude health check from SSL redirect if needed
+# config.ssl_options = {
+#   redirect: { exclude: ->(request) { request.path == "/up" } }
+# }
+
+# Exclude health check from host authorization if needed
+# config.host_authorization = {
+#   exclude: ->(request) { request.path == "/up" }
+# }
+```
+
+## Starting the Server
+
+```bash
+# Start in production mode on the default port (3000)
+RAILS_ENV=production bin/rails server
+
+# Specify a port
+RAILS_ENV=production bin/rails server -p 8080
+
+# Bind to a specific address
+RAILS_ENV=production bin/rails server -b 0.0.0.0
+
+# Daemonize (run in background)
+RAILS_ENV=production bin/rails server -d
+```
+
+## Background Jobs in Production
+
+In development, Rails uses the `:async` queue adapter which stores jobs in memory and loses them on restart. For production, use a durable adapter backed by a database or external queue.
+
+Rails includes **Solid Queue** for production, which stores jobs in the database:
+
+```ruby
+# config/environments/production.rb
+# config.active_job.queue_adapter = :solid_queue  # set via Gemfile/config
+```
+
+For Kamal deployments, enable Solid Queue inside the Puma process for single-server setups:
+
+```yaml
+# config/deploy.yml
+env:
+  SOLID_QUEUE_IN_PUMA: true
+```
+
+This tells Puma's `plugin :solid_queue` to start and stop the Solid Queue supervisor automatically alongside the web server.

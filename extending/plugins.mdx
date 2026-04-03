@@ -1,0 +1,345 @@
+---
+title: "Rails Plugins and Railties"
+description: "Extend Rails using Railties to add initializers, configuration, rake tasks, and generators to your plugin."
+---
+
+A Rails plugin is a Ruby gem designed to extend or modify a Rails application. Plugins serve several purposes: they let developers experiment with new ideas without changing the core codebase, they support a modular architecture, and they give teams a clean outlet for shared functionality.
+
+At a technical level, a plugin often uses a **Railtie** to hook into the Rails boot process. A Railtie is the most basic integration point for extending Rails—it is typically used when your plugin needs to add configuration, rake tasks, or initializer code, but does not expose controllers, views, or routes.
+
+<Note>
+An Engine is a more advanced type of plugin that behaves like a mini Rails application with its own routes, models, and views. All engines are plugins, but not all plugins need to be engines. See [Rails Engines](/extending/engines) for details.
+</Note>
+
+## When to use a Railtie
+
+A Railtie is required when your plugin needs to:
+
+- Add configuration options accessible via `Rails.application.config`
+- Automatically include modules into Rails classes without manual setup
+- Provide Rake tasks to the host application
+- Register initializers that run during Rails boot
+- Add middleware to the application stack
+- Configure Rails generators
+- Subscribe to `ActiveSupport::Notifications`
+
+For simple plugins that only extend core classes or add utility modules, a Railtie is not necessary.
+
+## Generating a plugin
+
+```bash
+$ rails plugin new api_boost
+```
+
+This creates a minimal plugin structure suitable for utilities, core class extensions, or small helper methods:
+
+```
+api_boost/
+├── api_boost.gemspec
+├── Gemfile
+├── lib/
+│   ├── api_boost/
+│   │   └── version.rb
+│   ├── api_boost.rb
+│   └── tasks/
+│       └── api_boost_tasks.rake
+├── test/
+│   ├── dummy/          # Full Rails app for testing
+│   └── test_helper.rb
+├── MIT-LICENSE
+└── README.md
+```
+
+The `test/dummy` directory is a complete Rails application that loads your plugin automatically, giving you a real Rails environment to test against. You can use `rails console` and `rails server` inside it.
+
+## Plugin generator options
+
+<CardGroup cols={2}>
+  <Card title="Basic plugin" icon="puzzle-piece">
+    No flags. Minimal structure for utilities and core class extensions.
+
+    ```bash
+    rails plugin new api_boost
+    ```
+  </Card>
+  <Card title="Full plugin" icon="cubes">
+    `--full`. Adds `app/` tree and an Engine class, sharing the host namespace.
+
+    ```bash
+    rails plugin new api_boost --full
+    ```
+  </Card>
+  <Card title="Mountable engine" icon="rocket">
+    `--mountable`. Fully isolated namespace, own routing, and assets.
+
+    ```bash
+    rails plugin new api_boost --mountable
+    ```
+  </Card>
+  <Card title="Help" icon="circle-question">
+    See all available options.
+
+    ```bash
+    rails plugin new --help
+    ```
+  </Card>
+</CardGroup>
+
+## Creating a Railtie
+
+Create a subclass of `Rails::Railtie`. This class must be loaded during the Rails boot process and is conventionally named `MyNamespace::Railtie`.
+
+```ruby
+# lib/my_gem/railtie.rb
+module MyGem
+  class Railtie < Rails::Railtie
+  end
+end
+```
+
+Load the Railtie from the gem's main entry point, guarding against non-Rails environments:
+
+```ruby
+# lib/my_gem.rb
+require "my_gem/railtie" if defined?(Rails::Railtie)
+```
+
+## Registering initializers
+
+Use the `initializer` macro to run code during Rails boot. The initializer name must be unique—use a namespaced string to avoid collisions.
+
+```ruby
+class MyGem::Railtie < Rails::Railtie
+  initializer "my_gem.configure_rails_initialization" do
+    # runs during Rails boot
+  end
+end
+```
+
+Access the application object to work with middleware or other app-specific config:
+
+```ruby
+class MyGem::Railtie < Rails::Railtie
+  initializer "my_gem.add_middleware" do |app|
+    app.middleware.use MyGem::Middleware
+  end
+end
+```
+
+Control ordering with `:before` and `:after`:
+
+```ruby
+class MyGem::Railtie < Rails::Railtie
+  initializer "my_gem.setup", before: "active_record.initialize_database" do
+    # runs before Active Record initializes the database
+  end
+end
+```
+
+## Adding configuration via `config`
+
+Railties can access a shared `config` object. Use `ActiveSupport::OrderedOptions` to create a namespaced configuration hash:
+
+```ruby
+# lib/api_boost/railtie.rb
+module ApiBoost
+  class Railtie < Rails::Railtie
+    config.api_boost = ActiveSupport::OrderedOptions.new
+    config.api_boost.default_rate_limit = 60
+
+    initializer "api_boost.configure" do |app|
+      ApiBoost.configuration = app.config.api_boost
+    end
+  end
+end
+```
+
+The host application can now configure the plugin in `config/application.rb` or an environment file:
+
+```ruby
+# config/application.rb
+config.api_boost.default_rate_limit = 100
+```
+
+To expose a clean configuration module on the plugin itself:
+
+```ruby
+# lib/api_boost/configuration.rb
+module ApiBoost
+  mattr_accessor :configuration, default: nil
+
+  def self.configure
+    yield(configuration) if block_given?
+  end
+end
+```
+
+## Automatically including modules into Rails classes
+
+Instead of requiring users to manually `include` your module in `ApplicationRecord`, use `ActiveSupport.on_load` inside an initializer. The `on_load` hook fires after the specified Rails component is fully loaded:
+
+```ruby
+class ApiBoost::Railtie < Rails::Railtie
+  initializer "api_boost.active_record" do
+    ActiveSupport.on_load(:active_record) do
+      include ApiBoost::ActsAsApiResource
+    end
+  end
+end
+```
+
+Common `on_load` targets:
+
+| Hook | When it fires |
+|------|--------------|
+| `:active_record` | After Active Record is loaded |
+| `:action_controller` | After Action Controller is loaded |
+| `:action_view` | After Action View is loaded |
+| `:action_mailer` | After Action Mailer is loaded |
+
+## Adding rake tasks
+
+Use the `rake_tasks` block to load task files. Tasks are only loaded when Rake is running, not on every Rails boot:
+
+```ruby
+class ApiBoost::Railtie < Rails::Railtie
+  rake_tasks do
+    load "tasks/api_boost_tasks.rake"
+  end
+end
+```
+
+Create the task file:
+
+```ruby
+# lib/tasks/api_boost_tasks.rake
+namespace :api_boost do
+  desc "Show API usage statistics"
+  task stats: :environment do
+    puts "API Boost Statistics:"
+    # inspect models, counts, etc.
+  end
+end
+```
+
+Applications using your plugin now have access to:
+
+```bash
+$ bin/rails api_boost:stats
+```
+
+## Adding generators
+
+Load custom generators from a Railtie using the `generators` block:
+
+```ruby
+class MyGem::Railtie < Rails::Railtie
+  generators do
+    require "path/to/my_gem_generator"
+  end
+end
+```
+
+<Info>
+By default, Rails loads generators from any directory on the load path. Use the `generators` block only when your generators live outside the default path.
+</Info>
+
+## Running a process when the Rails server starts
+
+Use the `server` block to launch a companion process alongside `rails server`:
+
+```ruby
+class MyGem::Railtie < Rails::Railtie
+  server do
+    MyGem::BackgroundWorker.start
+  end
+end
+```
+
+## Running code in the Rails console
+
+Use the `console` block to run code only when `rails console` starts:
+
+```ruby
+class MyGem::Railtie < Rails::Railtie
+  console do
+    puts "MyGem console helpers loaded"
+  end
+end
+```
+
+## Complete Railtie example
+
+The following example shows a Railtie that sets up configuration, auto-includes a module into Active Record models, and provides a rake task:
+
+```ruby
+# lib/api_boost/railtie.rb
+module ApiBoost
+  class Railtie < Rails::Railtie
+    config.api_boost = ActiveSupport::OrderedOptions.new
+    config.api_boost.default_rate_limit = 60
+
+    initializer "api_boost.configure" do |app|
+      ApiBoost.configuration = app.config.api_boost
+    end
+
+    initializer "api_boost.active_record" do
+      ActiveSupport.on_load(:active_record) do
+        include ApiBoost::ActsAsApiResource
+      end
+    end
+
+    rake_tasks do
+      load "tasks/api_boost_tasks.rake"
+    end
+  end
+end
+```
+
+Require the Railtie from the plugin's main entry point:
+
+```ruby
+# lib/api_boost.rb
+require "api_boost/version"
+require "api_boost/configuration"
+require "api_boost/railtie"
+require "api_boost/acts_as_api_resource"
+
+module ApiBoost
+end
+```
+
+## Testing a Railtie
+
+Use the dummy application inside your plugin to verify that the Railtie integrates correctly:
+
+```ruby
+# test/railtie_test.rb
+require "test_helper"
+
+class RailtieTest < ActiveSupport::TestCase
+  def test_configuration_is_available
+    assert_not_nil ApiBoost.configuration
+    assert_equal 60, ApiBoost.configuration.default_rate_limit
+  end
+
+  def test_module_is_automatically_included
+    assert Class.new(ApplicationRecord).include?(ApiBoost::ActsAsApiResource)
+  end
+
+  def test_rake_tasks_are_loaded
+    Rails.application.load_tasks
+    assert Rake::Task.task_defined?("api_boost:stats")
+  end
+end
+```
+
+Run the tests from the plugin root:
+
+```bash
+$ bin/test
+```
+
+<Tip>
+For more on the Rails initialization lifecycle—the order in which railties, initializers, and load hooks fire—see the Rails Initialization Process guide.
+</Tip>

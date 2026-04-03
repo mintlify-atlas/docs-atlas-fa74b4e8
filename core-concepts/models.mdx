@@ -1,0 +1,444 @@
+---
+title: "Models"
+description: "How Active Model provides model-like interfaces for plain Ruby objects without requiring a database."
+---
+
+Active Model is a library containing various modules that can be used on plain Ruby objects that require model-like features but are not tied to any database table.
+
+While Active Record provides an interface for defining models that correspond to database tables, Active Model provides functionality for building model-like Ruby classes that don't necessarily need to be backed by a database. Active Model can be used independently of Active Record.
+
+<CardGroup cols={2}>
+  <Card title="ActiveModel::API" icon="plug">
+    Makes a plain Ruby class compatible with Action Pack and Action View helpers right out of the box.
+  </Card>
+  <Card title="ActiveModel::Attributes" icon="tag">
+    Define typed attributes with default values, casting, and serialization.
+  </Card>
+  <Card title="ActiveModel::Validations" icon="circle-check">
+    Add validation rules to any Ruby class using the same API as Active Record.
+  </Card>
+  <Card title="ActiveModel::Callbacks" icon="rotate">
+    Add Active Record-style lifecycle callbacks (before, after, around) to plain objects.
+  </Card>
+</CardGroup>
+
+## Active Model vs Active Record
+
+| | Active Model | Active Record |
+|---|---|---|
+| Database required | No | Yes |
+| Validations | Yes | Yes |
+| Callbacks | Yes | Yes |
+| Attributes with types | Yes | Yes |
+| Dirty tracking | Yes | Yes |
+| Persistence (save, find) | No | Yes |
+| Migrations | No | Yes |
+
+## `ActiveModel::API`
+
+Including `ActiveModel::API` makes a class work with Action Pack and Action View helpers. It includes several modules by default: attribute assignment, conversion, naming, translation, and validations.
+
+```ruby
+class EmailContact
+  include ActiveModel::API
+
+  attr_accessor :name, :email, :message
+  validates :name, :email, :message, presence: true
+
+  def deliver
+    if valid?
+      # Deliver email
+    end
+  end
+end
+```
+
+```ruby
+email_contact = EmailContact.new(name: "David", email: "david@example.com", message: "Hello World")
+
+email_contact.name          # => "David"        (Attribute Assignment)
+email_contact.to_model == email_contact  # => true   (Conversion)
+email_contact.model_name.name  # => "EmailContact"  (Naming)
+EmailContact.human_attribute_name("name")  # => "Name"  (Translation)
+email_contact.valid?        # => true           (Validations)
+```
+
+Any class including `ActiveModel::API` can be used with `form_with`, `render`, and other Action View helpers, just like Active Record objects:
+
+```erb
+<%= form_with model: EmailContact.new do |form| %>
+  <%= form.text_field :name %>
+<% end %>
+```
+
+Which produces:
+
+```html
+<form action="/email_contacts" method="post">
+  <input type="text" name="email_contact[name]" id="email_contact_name">
+</form>
+```
+
+## `ActiveModel::Model`
+
+`ActiveModel::Model` includes `ActiveModel::API` and is the recommended approach for implementing model-like Ruby classes. It will be extended in future Rails versions to add more functionality.
+
+```ruby
+class Person
+  include ActiveModel::Model
+
+  attr_accessor :name, :age
+end
+```
+
+```ruby
+person = Person.new(name: 'bob', age: '18')
+person.name  # => "bob"
+person.age   # => "18"
+```
+
+## `ActiveModel::Attributes`
+
+`ActiveModel::Attributes` lets you define typed attributes with default values, casting, and serialization on plain Ruby objects.
+
+```ruby
+class Person
+  include ActiveModel::Attributes
+
+  attribute :name, :string
+  attribute :date_of_birth, :date
+  attribute :active, :boolean, default: true
+end
+```
+
+```ruby
+person = Person.new
+
+person.name = "Jane"
+person.name
+# => "Jane"
+
+person.date_of_birth = "2020-01-01"
+person.date_of_birth
+# => Wed, 01 Jan 2020
+person.date_of_birth.class
+# => Date
+
+person.active
+# => true  (default value)
+
+person.active = 0
+person.active
+# => false  (cast from integer to boolean)
+```
+
+Additional methods available with `ActiveModel::Attributes`:
+
+```ruby
+Person.attribute_names
+# => ["name", "date_of_birth", "active"]
+
+person.attributes
+# => {"name" => "Jane", "date_of_birth" => Wed, 01 Jan 2020, "active" => false}
+```
+
+## `ActiveModel::Validations`
+
+`ActiveModel::Validations` adds the ability to validate objects using the same API as Active Record.
+
+```ruby
+class Person
+  include ActiveModel::Validations
+
+  attr_accessor :name, :email, :token
+
+  validates :name, presence: true
+  validates :email, format: { with: URI::MailTo::EMAIL_REGEXP }
+  validates! :token, presence: true
+end
+```
+
+```ruby
+person = Person.new
+person.token = "2b1f325"
+person.valid?
+# => false
+
+person.name = "Jane Doe"
+person.email = "me"
+person.valid?
+# => false
+
+person.email = "jane.doe@gmail.com"
+person.valid?
+# => true
+```
+
+<Note>
+`validates!` (with a `!`) raises an `ActiveModel::StrictValidationFailed` exception if the validation fails, rather than adding to the `errors` collection.
+</Note>
+
+## `ActiveModel::Callbacks`
+
+`ActiveModel::Callbacks` gives plain Ruby objects Active Record-style lifecycle callbacks.
+
+<Steps>
+  <Step title="Extend ActiveModel::Callbacks">
+    Use `extend` (not `include`) to add callback functionality to your class.
+
+    ```ruby
+    class Person
+      extend ActiveModel::Callbacks
+    end
+    ```
+  </Step>
+  <Step title="Define model callbacks">
+    Call `define_model_callbacks` to create `before`, `around`, and `after` hooks for a given event.
+
+    ```ruby
+    define_model_callbacks :update
+    ```
+  </Step>
+  <Step title="Register callbacks">
+    Use the generated callback methods to register logic:
+
+    ```ruby
+    before_update :reset_me
+    after_update :finalize_me
+    around_update :log_me
+    ```
+  </Step>
+  <Step title="Use run_callbacks in the method">
+    Call `run_callbacks` inside the method to trigger the registered callbacks.
+
+    ```ruby
+    def update
+      run_callbacks(:update) do
+        puts "update method called"
+      end
+    end
+    ```
+  </Step>
+</Steps>
+
+Full example:
+
+```ruby
+class Person
+  extend ActiveModel::Callbacks
+
+  define_model_callbacks :update
+
+  before_update :reset_me
+  after_update :finalize_me
+  around_update :log_me
+
+  def update
+    run_callbacks(:update) do
+      puts "update method called"
+    end
+  end
+
+  private
+    def reset_me
+      puts "reset_me method: called before the update method"
+    end
+
+    def finalize_me
+      puts "finalize_me method: called after the update method"
+    end
+
+    def log_me
+      puts "log_me method: called around the update method"
+      yield
+      puts "log_me method: block successfully called"
+    end
+end
+```
+
+```ruby
+person = Person.new
+person.update
+# reset_me method: called before the update method
+# log_me method: called around the update method
+# update method called
+# log_me method: block successfully called
+# finalize_me method: called after the update method
+```
+
+Abort a callback chain by throwing `:abort`:
+
+```ruby
+def reset_me
+  throw :abort
+end
+```
+
+## `ActiveModel::Dirty`
+
+`ActiveModel::Dirty` tracks changes made to model attributes before they are saved.
+
+```ruby
+class Person
+  include ActiveModel::Dirty
+
+  attr_reader :first_name, :last_name
+  define_attribute_methods :first_name, :last_name
+
+  def first_name=(value)
+    first_name_will_change! unless value == @first_name
+    @first_name = value
+  end
+
+  def save
+    changes_applied
+  end
+end
+```
+
+Available query methods after including `ActiveModel::Dirty`:
+
+```ruby
+person = Person.new
+person.changed?        # => false
+
+person.first_name = "Jane Doe"
+person.changed?        # => true
+person.changed         # => ["first_name"]
+person.changed_attributes  # => {"first_name" => nil}
+person.changes         # => {"first_name" => [nil, "Jane Doe"]}
+
+person.first_name_changed?   # => true
+person.first_name_was        # => nil
+person.first_name_change     # => [nil, "Jane Doe"]
+
+person.save
+person.previous_changes      # => {"first_name" => [nil, "Jane Doe"]}
+person.first_name_previously_changed?  # => true
+```
+
+## `ActiveModel::Naming`
+
+`ActiveModel::Naming` adds a `model_name` class method that provides naming and routing helpers used by Action Pack and Action View.
+
+```ruby
+class Person
+  extend ActiveModel::Naming
+end
+```
+
+```ruby
+Person.model_name.name              # => "Person"
+Person.model_name.singular          # => "person"
+Person.model_name.plural            # => "people"
+Person.model_name.param_key         # => "person"
+Person.model_name.route_key         # => "people"
+Person.model_name.singular_route_key  # => "person"
+Person.model_name.human             # => "Person"
+Person.model_name.element           # => "person"
+Person.model_name.collection        # => "people"
+```
+
+### Customizing the model name
+
+Override `model_name` to control URL generation for namespaced models:
+
+```ruby
+module Person
+  class Profile
+    include ActiveModel::Model
+
+    def self.model_name
+      ActiveModel::Name.new(self, nil, "Profile")
+    end
+  end
+end
+```
+
+With this override, `form_with model: Person::Profile.new` generates a form with the action `/profiles` instead of `/person/profiles`.
+
+## `ActiveModel::Serialization`
+
+`ActiveModel::Serialization` provides basic serialization. Declare an `attributes` hash containing the attributes to serialize (keys must be strings).
+
+```ruby
+class Person
+  include ActiveModel::Serialization
+
+  attr_accessor :name, :age
+
+  def attributes
+    { "name" => nil, "age" => nil }
+  end
+end
+```
+
+```ruby
+person = Person.new
+person.name = "bob"
+person.age = 22
+
+person.serializable_hash
+# => {"name" => "bob", "age" => 22}
+
+person.serializable_hash(only: :name)
+# => {"name" => "bob"}
+
+person.serializable_hash(except: :name)
+# => {"age" => 22}
+```
+
+For JSON serialization, use `ActiveModel::Serializers::JSON`:
+
+```ruby
+class Person
+  include ActiveModel::Serializers::JSON
+
+  attr_accessor :name
+
+  def attributes
+    { "name" => nil }
+  end
+end
+```
+
+```ruby
+person = Person.new
+person.name = "Bob"
+
+person.as_json   # => {"name" => "Bob"}
+person.to_json   # => "{\"name\":\"Bob\"}"
+```
+
+## `ActiveModel::SecurePassword`
+
+`ActiveModel::SecurePassword` provides a secure way to store passwords using bcrypt. Requires the `bcrypt` gem and a `password_digest` attribute.
+
+```ruby
+class Person
+  include ActiveModel::SecurePassword
+
+  has_secure_password
+  has_secure_password :recovery_password, validations: false
+
+  attr_accessor :password_digest, :recovery_password_digest
+end
+```
+
+```ruby
+person = Person.new
+person.password = person.password_confirmation = "aditya"
+person.valid?
+# => true
+
+person.authenticate("aditya")
+# => person object (authenticated)
+
+person.authenticate("notright")
+# => false
+```
+
+The following validations are added automatically by `has_secure_password`:
+- Password must be present on creation
+- Password confirmation must match (when `password_confirmation` is set)
+- Password must be 72 bytes or fewer (bcrypt limit)

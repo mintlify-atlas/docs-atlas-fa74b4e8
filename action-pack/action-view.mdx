@@ -1,0 +1,483 @@
+---
+title: "Action View"
+description: "How Rails renders HTML responses using ERB templates, layouts, partials, and view helpers."
+---
+
+Action View is the V in MVC. After a controller action finishes, Action View renders the response body — typically an HTML page built from a combination of a template, a layout, and partials.
+
+<CardGroup cols={2}>
+  <Card title="Templates" icon="file-code" href="#templates">
+    ERB files that embed Ruby in HTML to produce dynamic output
+  </Card>
+  <Card title="Layouts" icon="table-columns" href="#layouts">
+    Shared wrapper templates applied around action views
+  </Card>
+  <Card title="Partials" icon="puzzle-piece" href="#partials">
+    Reusable view fragments extracted into their own files
+  </Card>
+  <Card title="Helpers" icon="wrench" href="#helpers">
+    Built-in methods for links, assets, numbers, and text
+  </Card>
+</CardGroup>
+
+## Templates
+
+Action View templates live in `app/views`, in a subdirectory named after the controller. Rails uses the file extension to choose the template engine.
+
+| Extension | Engine | Use case |
+|-----------|--------|----------|
+| `.html.erb` | ERB | HTML responses |
+| `.json.jbuilder` | Jbuilder | JSON responses |
+| `.xml.builder` | Builder | XML responses |
+
+### ERB
+
+ERB (Embedded Ruby) lets you embed Ruby expressions inside HTML using special tags.
+
+| Tag | Behavior |
+|-----|----------|
+| `<% %>` | Executes Ruby, produces no output |
+| `<%= %>` | Executes Ruby and outputs the result |
+| `<%# %>` | Comment — not executed or rendered |
+| `<%-` / `-%>` | Strips surrounding whitespace |
+
+```html+erb
+<h1>Products</h1>
+
+<% @products.each do |product| %>
+  <div>
+    <h2><%= product.name %></h2>
+    <p><%= product.description %></p>
+    <%= link_to "View", product %>
+  </div>
+<% end %>
+```
+
+<Warning>
+`print` and `puts` do not produce output in ERB templates. Use `<%= %>` tags to render values to the page.
+</Warning>
+
+### Automatic view rendering
+
+Rails renders the view matching the action name automatically. If an `ArticlesController#index` action does not call `render` explicitly, Rails renders `app/views/articles/index.html.erb`.
+
+```ruby
+class ArticlesController < ApplicationController
+  def index
+    @articles = Article.all
+    # Rails renders app/views/articles/index.html.erb automatically
+  end
+end
+```
+
+Instance variables set in the controller (`@articles`) are available in the view.
+
+## Layouts
+
+Layouts are shared wrapper templates that appear around action views. The default layout is `app/views/layouts/application.html.erb`.
+
+```html+erb
+<%# app/views/layouts/application.html.erb %>
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>My Rails App</title>
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+    <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
+    <%= javascript_importmap_tags %>
+  </head>
+  <body>
+    <nav>
+      <ul>
+        <li><%= link_to "Home", root_path %></li>
+        <li><%= link_to "Articles", articles_path %></li>
+      </ul>
+    </nav>
+
+    <% flash.each do |name, msg| %>
+      <%= content_tag :div, msg, class: name %>
+    <% end %>
+
+    <%= yield %>
+
+    <footer>
+      <p>&copy; <%= Date.current.year %> My Company</p>
+    </footer>
+  </body>
+</html>
+```
+
+The `<%= yield %>` call is where the action's view template is inserted.
+
+### Controller-specific layouts
+
+Rails looks for a layout matching the controller name first. If `app/views/layouts/articles.html.erb` exists, it is used for all actions in `ArticlesController`. Otherwise, it falls back to `application.html.erb`.
+
+### `content_for` and `yield` with a name
+
+`content_for` captures a block of content in the view and makes it available in the layout under a named key:
+
+```html+erb
+<%# app/views/articles/show.html.erb %>
+<% content_for :sidebar do %>
+  <h3>Related articles</h3>
+  <%# ... %>
+<% end %>
+
+<h1><%= @article.title %></h1>
+<p><%= @article.body %></p>
+```
+
+```html+erb
+<%# app/views/layouts/application.html.erb %>
+<aside>
+  <%= yield :sidebar %>
+</aside>
+
+<main>
+  <%= yield %>
+</main>
+```
+
+<Tip>
+Use `content_for :head` to inject page-specific CSS or meta tags from a view into the layout's `<head>`.
+</Tip>
+
+## Partials
+
+Partials are reusable view fragments stored in files prefixed with `_`. You render them with `render`:
+
+```erb
+<%= render "product" %>
+```
+
+This looks for `_product.html.erb` in the same directory. To reference a partial in another directory, use the path:
+
+```erb
+<%= render "application/footer" %>
+```
+
+### Passing data with `locals`
+
+Pass variables to a partial using the `locals:` option:
+
+```html+erb
+<%# app/views/products/show.html.erb %>
+<%= render partial: "product", locals: { product: @product } %>
+```
+
+```html+erb
+<%# app/views/products/_product.html.erb %>
+<%= tag.div id: dom_id(product) do %>
+  <h2><%= product.name %></h2>
+  <p><%= product.description %></p>
+<% end %>
+```
+
+You can also use the shorthand syntax:
+
+```erb
+<%= render "product", product: @product %>
+```
+
+Or rely on Rails conventions when passing a model instance:
+
+```erb
+<%= render @product %>
+```
+
+This renders `_product.html.erb` and passes a local named `product` set to `@product`.
+
+### Rendering collections
+
+To render a partial for every item in a collection:
+
+```erb
+<%= render partial: "product", collection: @products %>
+```
+
+Or using the shorthand:
+
+```erb
+<%= render @products %>
+```
+
+Rails determines the partial name from the model class. Each partial receives a local variable named after the partial (`product` for `_product.html.erb`). A counter variable (`product_counter`) is also available, starting at `0`.
+
+### `local_assigns`
+
+Each partial has access to `local_assigns`, a hash of all locals passed to it. This lets you handle optional locals safely:
+
+```html+erb
+<%# app/views/products/_product.html.erb %>
+
+<% if local_assigns[:show_price] %>
+  <p><%= product.price %></p>
+<% end %>
+```
+
+Use `local_assigns.fetch` to provide a default value:
+
+```erb
+<% local_assigns.fetch(:theme, "light") %>
+```
+
+### Strict locals
+
+Declare a `locals:` signature at the top of a partial to enforce which locals are accepted and set default values:
+
+```html+erb
+<%# locals: (product:, theme: "light") -%>
+<div class="product <%= theme %>">
+  <h2><%= product.name %></h2>
+</div>
+```
+
+With a signature, rendering the partial without `product` raises an error, and rendering with an unknown local also raises an error. This improves memory efficiency since Rails only compiles one version of the partial.
+
+### Partial layouts
+
+A partial can have its own layout:
+
+```html+erb
+<%# app/views/articles/show.html.erb %>
+<%= render partial: "article", layout: "box", locals: { article: @article } %>
+```
+
+```html+erb
+<%# app/views/articles/_box.html.erb %>
+<div class="box">
+  <%= yield %>
+</div>
+```
+
+## Helpers
+
+Rails provides many view helper methods. These are available inside all templates.
+
+### Link helpers
+
+```ruby
+# Basic link
+link_to "Articles", articles_path
+# => <a href="/articles">Articles</a>
+
+# Link to a model instance
+link_to "View", @article
+# => <a href="/articles/1">View</a>
+
+# Link with HTML attributes
+link_to "Articles", articles_path, id: "nav-articles", class: "nav-link"
+
+# Link with a block (for complex content)
+link_to @profile do
+  image_tag("avatar.png") + content_tag(:span, @profile.name)
+end
+
+# Button that submits a POST form
+button_to "Sign In", sign_in_path
+```
+
+### Asset helpers
+
+```ruby
+# Stylesheet
+stylesheet_link_tag "application"
+# => <link href="/assets/application.css" rel="stylesheet" />
+
+stylesheet_link_tag "application", media: "print"
+
+# JavaScript
+javascript_include_tag "application"
+# => <script src="/assets/application.js"></script>
+
+javascript_include_tag "analytics", defer: true
+
+# Image
+image_tag "logo.png"
+# => <img src="/assets/logo.png" />
+
+image_tag "logo.png", size: "200x50", alt: "My App"
+# => <img src="/assets/logo.png" width="200" height="50" alt="My App" />
+
+# Video
+video_tag "tutorial.mp4", controls: true
+# => <video src="/videos/tutorial.mp4" controls="controls"></video>
+
+# Audio
+audio_tag "podcast.mp3", controls: true
+# => <audio src="/audios/podcast.mp3" controls="controls"></audio>
+```
+
+### Tag helpers
+
+```ruby
+# Generic HTML tag
+content_tag :div, "Hello", class: "greeting"
+# => <div class="greeting">Hello</div>
+
+# Nested content with a block
+content_tag :section, class: "main" do
+  content_tag(:h1, "Title") + content_tag(:p, "Body text")
+end
+
+# Void elements (self-closing)
+tag.br
+tag.hr class: "divider"
+
+# Any element using tag builder
+tag.div class: "card" do
+  tag.h2("Card title") + tag.p("Card content")
+end
+```
+
+### Number helpers
+
+```ruby
+number_to_currency(1234567.89)
+# => "$1,234,567.89"
+
+number_to_currency(1234567.89, unit: "€", separator: ",", delimiter: ".")
+# => "€1.234.567,89"
+
+number_to_percentage(75.5, precision: 1)
+# => "75.5%"
+
+number_to_phone(5551234567)
+# => "555-123-4567"
+
+number_with_delimiter(1234567)
+# => "1,234,567"
+
+number_with_precision(3.14159, precision: 2)
+# => "3.14"
+
+number_to_human(1_500_000)
+# => "1.5 Million"
+
+number_to_human_size(1_048_576)
+# => "1 MB"
+```
+
+### Date and time helpers
+
+```ruby
+# Human-readable time distance
+distance_of_time_in_words(Time.current, 3.hours.from_now)
+# => "about 3 hours"
+
+distance_of_time_in_words(Time.current, 45.seconds.from_now, include_seconds: true)
+# => "less than a minute"
+
+# Time relative to now
+time_ago_in_words(2.days.ago)
+# => "2 days"
+```
+
+### Text helpers
+
+```ruby
+# Truncate long text
+truncate("Rails is a web application framework written in Ruby.", length: 30)
+# => "Rails is a web application..."
+
+truncate("Rails is a web application framework written in Ruby.", length: 40, omission: " [...]")
+# => "Rails is a web application frame [...]"
+
+# Pluralize based on a count
+pluralize(1, "item")    # => "1 item"
+pluralize(3, "item")    # => "3 items"
+
+# Extract a snippet around a phrase
+excerpt("This is a very beautiful morning", "very", radius: 5)
+# => "...s a very bea..."
+
+# Word wrap
+word_wrap("Once upon a time", line_width: 10)
+# => "Once upon\na time"
+```
+
+### Sanitization helpers
+
+```ruby
+# Sanitize user-provided HTML, stripping disallowed tags
+sanitize @user_content
+
+# Allow only specific tags and attributes
+sanitize @user_content, tags: %w[b i em strong], attributes: %w[class]
+
+# Strip all HTML tags
+strip_tags("<b>Hello</b> world")
+# => "Hello world"
+
+# Strip all links
+strip_links('<a href="/foo">Foo</a> bar')
+# => "Foo bar"
+```
+
+<Warning>
+Always sanitize user-generated content before rendering it in views to prevent XSS attacks. Never use `html_safe` on untrusted input.
+</Warning>
+
+## Layouts and rendering pipeline
+
+When a controller action finishes, Rails assembles the response through this pipeline:
+
+<Steps>
+  <Step title="Action runs">
+    The controller action sets instance variables and optionally calls `render` or `redirect_to`.
+  </Step>
+  <Step title="Template rendered">
+    Rails renders the action's template (e.g. `app/views/articles/show.html.erb`) into a string.
+  </Step>
+  <Step title="Partials resolved">
+    Any `render` calls inside the template are resolved and their output is inserted inline.
+  </Step>
+  <Step title="Layout applied">
+    The template output is inserted at `yield` in the layout file. Named `yield` blocks receive content captured with `content_for`.
+  </Step>
+  <Step title="Response sent">
+    The final HTML is written to the response body and sent to the browser.
+  </Step>
+</Steps>
+
+### Using `render` from the controller
+
+```ruby
+# Render the default view for this action (implicit)
+def show
+  @article = Article.find(params[:id])
+end
+
+# Render a different template
+def update
+  @article = Article.find(params[:id])
+  if @article.update(article_params)
+    redirect_to @article
+  else
+    render :edit, status: :unprocessable_entity
+  end
+end
+
+# Render a template from another controller
+render "products/index"
+
+# Render JSON
+render json: { status: "ok" }
+
+# Render with a specific status
+render :show, status: :created
+```
+
+## Localized views
+
+Action View can render locale-specific templates. If `I18n.locale` is set to `:de`, Rails looks for `show.de.html.erb` before falling back to `show.html.erb`:
+
+```
+app/views/articles/show.html.erb     # default
+app/views/articles/show.de.html.erb  # used when locale is :de
+app/views/articles/show.fr.html.erb  # used when locale is :fr
+```
+
+You don't need to provide localized views for every locale — the unlocalized version is used as a fallback.

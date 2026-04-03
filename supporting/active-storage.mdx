@@ -1,0 +1,513 @@
+---
+title: "Active Storage"
+description: "Attach files to Active Record models and store them on disk, Amazon S3, Google Cloud Storage, or Azure Blob Storage."
+---
+
+Active Storage facilitates uploading files to a cloud storage service like Amazon S3 or Google Cloud Storage and attaching those files to Active Record objects. It uses polymorphic join tables so your existing models need no additional database columns. It also provides a disk service for development and supports mirroring files across services for backups and migrations.
+
+<CardGroup cols={2}>
+  <Card title="has_one_attached" icon="paperclip">
+    Attach a single file to a model—an avatar, a profile photo, or a document.
+  </Card>
+  <Card title="has_many_attached" icon="images">
+    Attach multiple files to a model—a message with many photos, or a post with many documents.
+  </Card>
+  <Card title="Image Variants" icon="crop">
+    Resize, crop, and transform images on demand using Vips or ImageMagick.
+  </Card>
+  <Card title="Direct Uploads" icon="upload">
+    Upload files straight from the browser to the cloud, bypassing your application servers.
+  </Card>
+</CardGroup>
+
+## Setup
+
+<Steps>
+  <Step title="Run the installer">
+    ```bash
+    $ bin/rails active_storage:install
+    $ bin/rails db:migrate
+    ```
+
+    This creates three tables:
+
+    | Table | Purpose |
+    |---|---|
+    | `active_storage_blobs` | Stores file metadata (filename, content type, size, checksum) |
+    | `active_storage_attachments` | Polymorphic join table connecting your models to blobs |
+    | `active_storage_variant_records` | Tracks generated image variants |
+  </Step>
+
+  <Step title="Configure storage services">
+    Declare services in `config/storage.yml`:
+
+    ```yaml
+    local:
+      service: Disk
+      root: <%= Rails.root.join("storage") %>
+
+    test:
+      service: Disk
+      root: <%= Rails.root.join("tmp/storage") %>
+
+    amazon:
+      service: S3
+      access_key_id: <%= Rails.app.credentials.dig(:aws, :access_key_id) %>
+      secret_access_key: <%= Rails.app.credentials.dig(:aws, :secret_access_key) %>
+      region: "us-east-1"
+      bucket: your-bucket-<%= Rails.env %>
+
+    google:
+      service: GCS
+      credentials: <%= Rails.root.join("path/to/keyfile.json") %>
+      project: "your-project"
+      bucket: your-bucket-<%= Rails.env %>
+    ```
+  </Step>
+
+  <Step title="Set the active service per environment">
+    ```ruby
+    # config/environments/development.rb
+    config.active_storage.service = :local
+
+    # config/environments/production.rb
+    config.active_storage.service = :amazon
+
+    # config/environments/test.rb
+    config.active_storage.service = :test
+    ```
+  </Step>
+</Steps>
+
+## Storage Services
+
+<Tabs>
+  <Tab title="Local Disk">
+    Stores files in a local directory. Default for development and test.
+
+    ```yaml
+    local:
+      service: Disk
+      root: <%= Rails.root.join("storage") %>
+    ```
+
+    No additional gems required.
+  </Tab>
+  <Tab title="Amazon S3">
+    ```yaml
+    amazon:
+      service: S3
+      access_key_id: <%= Rails.app.credentials.dig(:aws, :access_key_id) %>
+      secret_access_key: <%= Rails.app.credentials.dig(:aws, :secret_access_key) %>
+      region: "us-east-1"
+      bucket: your-bucket-<%= Rails.env %>
+      upload:
+        server_side_encryption: "AES256"
+    ```
+
+    Add the gem:
+
+    ```ruby
+    # Gemfile
+    gem "aws-sdk-s3", require: false
+    ```
+
+    Required S3 permissions: `s3:ListBucket`, `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`.
+
+    For S3-compatible APIs (DigitalOcean Spaces, MinIO):
+
+    ```yaml
+    digitalocean:
+      service: S3
+      endpoint: https://nyc3.digitaloceanspaces.com
+      access_key_id: <%= Rails.app.credentials.dig(:digitalocean, :access_key_id) %>
+      secret_access_key: <%= Rails.app.credentials.dig(:digitalocean, :secret_access_key) %>
+      bucket: your-bucket
+      region: nyc3
+    ```
+  </Tab>
+  <Tab title="Google Cloud Storage">
+    ```yaml
+    google:
+      service: GCS
+      credentials: <%= Rails.root.join("path/to/keyfile.json") %>
+      project: "your-gcp-project"
+      bucket: your-bucket-<%= Rails.env %>
+      cache_control: "public, max-age=3600"
+    ```
+
+    Add the gem:
+
+    ```ruby
+    # Gemfile
+    gem "google-cloud-storage", "~> 1.11", require: false
+    ```
+  </Tab>
+  <Tab title="Mirror Service">
+    Keep multiple services in sync during migrations. Writes go to all services; reads come from the primary:
+
+    ```yaml
+    s3_primary:
+      service: S3
+      # ...primary config
+
+    s3_replica:
+      service: S3
+      # ...replica config
+
+    production:
+      service: Mirror
+      primary: s3_primary
+      mirrors:
+        - s3_replica
+    ```
+  </Tab>
+</Tabs>
+
+## Attaching Files to Models
+
+### has_one_attached
+
+Set up a one-to-one attachment:
+
+```ruby
+class User < ApplicationRecord
+  has_one_attached :avatar
+end
+```
+
+Attach an avatar when creating a user via a form:
+
+```erb
+<%= form_with model: @user do |form| %>
+  <%= form.file_field :avatar %>
+  <%= form.submit %>
+<% end %>
+```
+
+```ruby
+class SignupController < ApplicationController
+  def create
+    user = User.create!(user_params)
+    session[:user_id] = user.id
+    redirect_to root_path
+  end
+
+  private
+    def user_params
+      params.expect(user: [:email_address, :password, :avatar])
+    end
+end
+```
+
+Attach programmatically on an existing record:
+
+```ruby
+user.avatar.attach(params[:avatar])
+```
+
+Check if an attachment exists:
+
+```ruby
+user.avatar.attached? # => true or false
+```
+
+Use a specific storage service for this attachment:
+
+```ruby
+class User < ApplicationRecord
+  has_one_attached :avatar, service: :google
+end
+```
+
+### has_many_attached
+
+Set up a one-to-many attachment:
+
+```ruby
+class Message < ApplicationRecord
+  has_many_attached :images
+end
+```
+
+Upload multiple files from a form:
+
+```erb
+<%= form_with model: @message do |form| %>
+  <%= form.text_field :title %>
+  <%= form.file_field :images, multiple: true %>
+  <%= form.submit %>
+<% end %>
+```
+
+```ruby
+class MessagesController < ApplicationController
+  def index
+    # Use with_attached_images to avoid N+1 queries
+    @messages = Message.all.with_attached_images
+  end
+
+  def create
+    message = Message.create!(params.expect(message: [:title, images: []]))
+    redirect_to message
+  end
+end
+```
+
+Add images to an existing message:
+
+```ruby
+@message.images.attach(params[:images])
+```
+
+### Attaching from IO / Files
+
+```ruby
+# Attach from a file on disk
+user.avatar.attach(
+  io:           File.open("/path/to/face.jpg"),
+  filename:     "face.jpg",
+  content_type: "image/jpeg"
+)
+
+# Attach from a downloaded file
+@message.images.attach(
+  io:           URI.open("https://example.com/photo.jpg"),
+  filename:     "photo.jpg",
+  content_type: "image/jpeg"
+)
+```
+
+## Displaying Attachments
+
+### Linking to Files
+
+Generate a URL that redirects to a signed service URL (default):
+
+```erb
+<%# In views %>
+<%= image_tag url_for(user.avatar) %>
+
+<%# As a download link %>
+<%= link_to "Download", rails_blob_path(user.avatar, disposition: "attachment") %>
+```
+
+From outside a view or controller (background jobs, etc.):
+
+```ruby
+Rails.application.routes.url_helpers.rails_blob_path(user.avatar, only_path: true)
+```
+
+### Proxy Mode
+
+Serve files through your application servers (useful for CDN integration):
+
+```ruby
+# config/initializers/active_storage.rb
+Rails.application.config.active_storage.resolve_model_to_route = :rails_storage_proxy
+```
+
+```erb
+<%# Explicit proxy URL %>
+<%= image_tag rails_storage_proxy_path(@user.avatar) %>
+```
+
+## Image Variants and Transformations
+
+Active Storage can transform images on demand using Vips (recommended) or ImageMagick.
+
+<Warning>
+  Install `libvips` (v8.6+) or ImageMagick before using variants. For best performance, prefer libvips—it can be up to 10x faster with 1/10 the memory usage.
+</Warning>
+
+### On-Demand Variants
+
+```erb
+<%# Resize to fit within 100x100 %>
+<%= image_tag user.avatar.variant(resize_to_limit: [100, 100]) %>
+
+<%# Resize and convert to WebP %>
+<%= image_tag user.avatar.variant(resize_to_limit: [400, 400], format: :webp) %>
+```
+
+### Named Variants on the Model
+
+Define variants alongside the attachment declaration for reuse:
+
+```ruby
+class User < ApplicationRecord
+  has_one_attached :avatar do |attachable|
+    attachable.variant :thumb,  resize_to_limit: [100, 100]
+    attachable.variant :medium, resize_to_limit: [300, 300]
+    attachable.variant :large,  resize_to_limit: [800, 800]
+  end
+end
+```
+
+Use named variants in views:
+
+```erb
+<%= image_tag user.avatar.variant(:thumb) %>
+<%= image_tag user.avatar.variant(:medium) %>
+```
+
+### Controlling When Variants Are Generated
+
+```ruby
+class User < ApplicationRecord
+  has_one_attached :avatar do |attachable|
+    # Generated on first request (default)
+    attachable.variant :large, resize_to_limit: [800, 800], process: :lazily
+
+    # Generated in a background job after attachment
+    attachable.variant :medium, resize_to_limit: [300, 300], process: :later
+
+    # Generated synchronously when the file is attached
+    attachable.variant :thumb, resize_to_limit: [100, 100], process: :immediately
+  end
+end
+```
+
+## Removing Attachments
+
+```ruby
+# Remove synchronously
+user.avatar.purge
+
+# Remove asynchronously via Active Job
+user.avatar.purge_later
+```
+
+Purging deletes both the database record (blob) and the file from the storage service.
+
+## Direct Uploads
+
+Direct uploads send files straight from the browser to the cloud, bypassing your application servers.
+
+<Steps>
+  <Step title="Include the JavaScript library">
+    ```erb
+    <%# app/views/layouts/application.html.erb %>
+    <%= javascript_include_tag "activestorage" %>
+    ```
+
+    Or import in your JavaScript bundle:
+
+    ```javascript
+    import * as ActiveStorage from "@rails/activestorage"
+    ActiveStorage.start()
+    ```
+  </Step>
+
+  <Step title="Add direct_upload to file fields">
+    ```erb
+    <%= form_with model: @message do |form| %>
+      <%= form.file_field :images, multiple: true, direct_upload: true %>
+      <%= form.submit %>
+    <% end %>
+    ```
+  </Step>
+
+  <Step title="Handle upload events (optional)">
+    ```javascript
+    addEventListener("direct-upload:initialize", (event) => {
+      const { target, detail } = event
+      const { id, file } = detail
+      target.insertAdjacentHTML("beforebegin", `
+        <div id="direct-upload-${id}" class="direct-upload">
+          <div id="direct-upload-progress-${id}" class="direct-upload__progress" style="width: 0%"></div>
+          <span class="direct-upload__filename">${file.name}</span>
+        </div>
+      `)
+    })
+
+    addEventListener("direct-upload:progress", (event) => {
+      const { id, progress } = event.detail
+      const progressElement = document.getElementById(`direct-upload-progress-${id}`)
+      progressElement.style.width = `${progress}%`
+    })
+    ```
+  </Step>
+</Steps>
+
+<Info>
+  Direct uploads are saved before the form is submitted. To retain them when form validation fails, use a hidden field with the attachment's `signed_id`:
+
+  ```erb
+  <%= form.hidden_field :avatar, value: @user.avatar.signed_id if @user.avatar.attached? %>
+  <%= form.file_field :avatar, direct_upload: true %>
+  ```
+</Info>
+
+## File Analysis and Metadata
+
+Active Storage analyzes uploaded files to extract metadata. From Rails 8.2, analysis runs before validation by default:
+
+```ruby
+class User < ApplicationRecord
+  has_one_attached :avatar
+
+  validate :validate_avatar_dimensions, if: -> { avatar.attached? }
+
+  private
+    def validate_avatar_dimensions
+      if avatar.metadata[:width] < 200 || avatar.metadata[:height] < 200
+        errors.add(:avatar, "must be at least 200x200 pixels")
+      end
+    end
+end
+```
+
+Control when analysis runs:
+
+```ruby
+class User < ApplicationRecord
+  # Analyze before validation (Rails 8.2+ default)
+  has_one_attached :avatar, analyze: :immediately
+
+  # Analyze in a background job
+  has_one_attached :document, analyze: :later
+
+  # Analyze on-demand when metadata is first accessed
+  has_many_attached :files, analyze: :lazily
+end
+```
+
+## Displaying Representations
+
+For non-image files (PDFs, videos), use `representable?` and `representation` to generate previews:
+
+```erb
+<ul>
+  <% @message.files.each do |file| %>
+    <li>
+      <% if file.representable? %>
+        <%= image_tag file.representation(resize_to_limit: [100, 100]) %>
+      <% else %>
+        <%= link_to rails_blob_path(file, disposition: "attachment") do %>
+          <%= image_tag "document-placeholder.png", alt: "Download file" %>
+        <% end %>
+      <% end %>
+    </li>
+  <% end %>
+</ul>
+```
+
+<Note>
+  Video previews require **ffmpeg** v3.4+. PDF previews require **poppler** or **muPDF**. These must be installed separately.
+</Note>
+
+## Third-Party Requirements
+
+| Feature | Requirement |
+|---|---|
+| Image variants & analysis | libvips v8.6+ **or** ImageMagick |
+| Video previews | ffmpeg v3.4+ and ffprobe |
+| PDF previews | poppler or muPDF |
+| Amazon S3 | `gem "aws-sdk-s3"` |
+| Google Cloud Storage | `gem "google-cloud-storage", "~> 1.11"` |
+| Azure Blob Storage | `gem "azure-storage-blob"` |
+
+<Warning>
+  muPDF is licensed under AGPL and requires a commercial license for some uses. Review licensing implications before installing.
+</Warning>

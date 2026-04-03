@@ -1,0 +1,277 @@
+---
+title: "Routing"
+description: "How the Rails router maps incoming HTTP requests to controller actions and generates URL helpers."
+---
+
+The Rails router matches incoming HTTP requests to specific controller actions in your application based on the URL path. It also generates path and URL helpers based on the resources configured in the router.
+
+Routes live in `config/routes.rb` and are declared inside a `Rails.application.routes.draw` block.
+
+<CardGroup cols={2}>
+  <Card title="Resource routing" icon="layer-group">
+    Declare all seven RESTful routes for a resource with a single call to `resources`.
+  </Card>
+  <Card title="Path helpers" icon="link">
+    The router generates `_path` and `_url` helpers so you never hard-code URLs in views.
+  </Card>
+  <Card title="Nested routes" icon="sitemap">
+    Express parent-child relationships between resources in your routing structure.
+  </Card>
+  <Card title="Constraints" icon="shield">
+    Restrict routes by segment format, request properties, or custom objects.
+  </Card>
+</CardGroup>
+
+## How routing works
+
+When your application receives an incoming request, it asks the router to match it to a controller action. For example:
+
+```
+GET /users/17
+```
+
+If the first matching route is:
+
+```ruby
+get "/users/:id", to: "users#show"
+```
+
+Rails dispatches the request to the `UsersController` class's `show` action with `{ id: '17' }` in the `params` hash.
+
+<Note>
+Rails uses snake_case for controller names in routes. A controller named `UserProfilesController` is specified as `user_profiles#show`.
+</Note>
+
+## Resource routing
+
+Resource routing is the Rails default. A single call to `resources` declares all seven routes for a given controller.
+
+```ruby
+resources :photos
+```
+
+This creates the following routes, all mapping to the `PhotosController`:
+
+| HTTP verb | Path | Controller#Action | Used to |
+|-----------|------|-------------------|---------|
+| GET | /photos | photos#index | display a list of all photos |
+| GET | /photos/new | photos#new | return an HTML form for creating a new photo |
+| POST | /photos | photos#create | create a new photo |
+| GET | /photos/:id | photos#show | display a specific photo |
+| GET | /photos/:id/edit | photos#edit | return an HTML form for editing a photo |
+| PATCH/PUT | /photos/:id | photos#update | update a specific photo |
+| DELETE | /photos/:id | photos#destroy | delete a specific photo |
+
+<Tabs>
+  <Tab title="Plural resources">
+    Use `resources` (plural) when a resource has an `index` action. This is the most common case.
+
+    ```ruby
+    resources :photos
+    resources :books
+    resources :videos
+    ```
+
+    You can define multiple resources in one call:
+
+    ```ruby
+    resources :photos, :books, :videos
+    ```
+  </Tab>
+  <Tab title="Singular resource">
+    Use `resource` (singular) when there is only one instance of a resource per user and it does not require an `index` action (for example, a user's profile or shopping basket).
+
+    ```ruby
+    resource :basket, only: [:show, :update, :destroy]
+    ```
+
+    A singular resource creates six routes (no `index`) and uses helpers like `basket_path` without an `:id` segment.
+  </Tab>
+  <Tab title="Limiting actions">
+    Use `:only` or `:except` to restrict which routes are generated.
+
+    ```ruby
+    resources :brands, only: [:index, :show]
+    resources :photos, except: [:destroy]
+    ```
+  </Tab>
+</Tabs>
+
+## Path and URL helpers
+
+Adding `resources :photos` generates these helper methods in your controllers and views:
+
+| Helper | Returns |
+|--------|---------|
+| `photos_path` | `/photos` |
+| `new_photo_path` | `/photos/new` |
+| `edit_photo_path(:id)` | `/photos/:id/edit` |
+| `photo_path(:id)` | `/photos/:id` |
+
+Each `_path` helper also has a corresponding `_url` helper (such as `photos_url`) that returns the same path prefixed with the current host, port, and path prefix.
+
+You can use model instances directly in helpers:
+
+```erb
+<%= link_to 'User Record', user_path(@user) %>
+```
+
+You can also pass an array of objects to generate nested paths:
+
+```erb
+<%= link_to 'Ad details', [@magazine, @ad] %>
+```
+
+### Named routes
+
+Use the `:as` option to give any route a custom name:
+
+```ruby
+get "exit", to: "sessions#destroy", as: :logout
+```
+
+This creates `logout_path` and `logout_url` helpers. Calling `logout_path` returns `/exit`.
+
+## Nested routes
+
+Nested routes express parent-child relationships between resources. For example, if ads belong to magazines:
+
+```ruby
+resources :magazines do
+  resources :ads
+end
+```
+
+This generates routes like `/magazines/:magazine_id/ads/:id` and creates helpers such as `magazine_ads_url` and `edit_magazine_ad_path(@magazine, @ad)`.
+
+<Warning>
+The general rule of thumb is to only nest resources one level deep. Deeply nested resources produce unwieldy URLs and complex helpers.
+</Warning>
+
+### Shallow nesting
+
+Use the `:shallow` option to generate collection actions under the parent but keep member actions at the top level:
+
+```ruby
+resources :articles do
+  resources :comments, shallow: true
+end
+```
+
+Collection actions (index, new, create) keep the `/articles/:article_id/comments` prefix. Member actions (show, edit, update, destroy) become `/comments/:id`.
+
+### Namespace routing
+
+Group controllers under a namespace using a `namespace` block:
+
+```ruby
+namespace :admin do
+  resources :articles
+end
+```
+
+This routes `/admin/articles` to `Admin::ArticlesController` and generates helpers like `admin_articles_path`.
+
+## Route constraints
+
+### Segment constraints
+
+Use `:constraints` to enforce a format for a dynamic segment using a regular expression:
+
+```ruby
+get "photos/:id", to: "photos#show", constraints: { id: /[A-Z]\d{5}/ }
+```
+
+This matches `/photos/A12345` but not `/photos/893`.
+
+### Request-based constraints
+
+Constrain a route based on properties of the request object, such as subdomain:
+
+```ruby
+constraints subdomain: "admin" do
+  resources :photos
+end
+```
+
+This matches requests to `https://admin.example.com/photos`.
+
+### Advanced constraints
+
+Provide an object that responds to `matches?` for more complex logic:
+
+```ruby
+class RestrictedListConstraint
+  def initialize
+    @ips = RestrictedList.retrieve_ips
+  end
+
+  def matches?(request)
+    @ips.include?(request.remote_ip)
+  end
+end
+
+Rails.application.routes.draw do
+  get "*path", to: "restricted_list#index",
+    constraints: RestrictedListConstraint.new
+end
+```
+
+You can also use a lambda:
+
+```ruby
+get "*path", to: "restricted_list#index",
+  constraints: lambda { |request| RestrictedList.retrieve_ips.include?(request.remote_ip) }
+```
+
+## Non-resourceful routes
+
+For cases where resourceful routing is not a good fit, you can define routes individually.
+
+<Tabs>
+  <Tab title="Dynamic segments">
+    Route segments prefixed with `:` are dynamic and available in `params`:
+
+    ```ruby
+    get "photos/:id/:user_id", to: "photos#show"
+    ```
+
+    A request to `/photos/1/2` sets `params` to `{ id: '1', user_id: '2' }`.
+  </Tab>
+  <Tab title="Wildcard segments">
+    A segment prefixed with `*` matches the remaining part of a path:
+
+    ```ruby
+    get "photos/*other", to: "photos#unknown"
+    ```
+
+    A request to `/photos/long/path/to/12` sets `params[:other]` to `"long/path/to/12"`.
+  </Tab>
+  <Tab title="Redirection">
+    Redirect any path to another path directly in the router:
+
+    ```ruby
+    get "/stories", to: redirect("/articles")
+
+    get "/stories/:name", to: redirect("/articles/%{name}")
+    ```
+
+    Default redirection is a 301 Moved Permanently. Use `:status` to change this:
+
+    ```ruby
+    get "/stories/:name", to: redirect("/articles/%{name}", status: 302)
+    ```
+  </Tab>
+</Tabs>
+
+## Inspecting routes
+
+Run `bin/rails routes` to list all defined routes in your application. The output shows the route prefix, HTTP verb, URL pattern, and the controller action it maps to.
+
+```bash
+bin/rails routes
+```
+
+<Tip>
+The prefix column in `bin/rails routes` output shows the base name used for `_path` and `_url` helpers.
+</Tip>

@@ -1,0 +1,385 @@
+---
+title: "Controllers"
+description: "How Action Controller processes requests, interacts with models, and produces responses."
+---
+
+Action Controller is the C in the Model-View-Controller (MVC) pattern. After the router has matched a controller to an incoming request, the controller is responsible for processing the request and generating the appropriate output.
+
+For most conventional RESTful applications, the controller receives the request, fetches or saves data from a model, and uses a view to create HTML output.
+
+<CardGroup cols={2}>
+  <Card title="Parameters" icon="sliders">
+    Access query string and POST data through the `params` hash.
+  </Card>
+  <Card title="Strong parameters" icon="shield-halved">
+    Explicitly permit attributes before allowing mass assignment.
+  </Card>
+  <Card title="Callbacks" icon="rotate">
+    Run code before, after, or around controller actions using `before_action`, `after_action`, and `around_action`.
+  </Card>
+  <Card title="Sessions and flash" icon="database">
+    Persist data across requests using sessions and pass temporary messages using the flash.
+  </Card>
+</CardGroup>
+
+## Creating a controller
+
+A controller is a Ruby class that inherits from `ApplicationController` and has methods like any other class. Once an incoming request is matched to a controller by the router, Rails creates an instance of that controller class and calls the method with the same name as the action.
+
+```ruby
+class ClientsController < ApplicationController
+  def new
+    @client = Client.new
+  end
+end
+```
+
+<Note>
+All controllers inherit from `ApplicationController`, which in turn inherits from `ActionController::Base`. For API-only applications, `ApplicationController` inherits from `ActionController::API` instead.
+</Note>
+
+If a controller action is empty, Rails automatically renders the matching view template. The `new` action above renders `app/views/clients/new.html.erb` by default.
+
+Rails favors plural names for controllers. For example, `ClientsController` is preferred over `ClientController`. Following this convention lets you use `resources` in routing without additional options.
+
+## Parameters
+
+Data from an incoming request is available in your controller via the `params` hash. Both query string parameters and POST form parameters are merged into `params`.
+
+```ruby
+class ClientsController < ApplicationController
+  # Handles GET /clients?status=activated
+  def index
+    if params[:status] == "activated"
+      @clients = Client.activated
+    else
+      @clients = Client.inactivated
+    end
+  end
+
+  # Handles POST /clients
+  def create
+    @client = Client.new(params[:client])
+    if @client.save
+      redirect_to @client
+    else
+      render "new"
+    end
+  end
+end
+```
+
+<Note>
+`params` is not a plain Ruby Hash. It is an `ActionController::Parameters` object. Symbol keys and string keys are treated as equivalent — `params[:foo]` and `params["foo"]` refer to the same value.
+</Note>
+
+### JSON parameters
+
+If the `Content-Type` header is set to `application/json`, Rails automatically parses the JSON body and makes it available in `params`.
+
+For example, sending:
+
+```json
+{ "user": { "name": "acme", "address": "123 Carrot Street" } }
+```
+
+Makes `params[:user][:name]` equal to `"acme"`.
+
+## Strong parameters
+
+With strong parameters, values from `params` cannot be used in Active Model mass assignments until they are explicitly permitted. This prevents users from accidentally updating sensitive model attributes.
+
+```ruby
+class PeopleController < ActionController::Base
+  def update
+    person = Person.find(params[:id])
+    person.update!(person_params)
+    redirect_to person
+  end
+
+  private
+    def person_params
+      params.expect(person: [:name, :age])
+    end
+end
+```
+
+<Steps>
+  <Step title="Use expect for required nested params">
+    `params.expect` requires the root key to be present and returns only the permitted attributes. If the key is missing, it raises an error and returns a 400 Bad Request response.
+
+    ```ruby
+    user_params = params.expect(user: [:username, :password])
+    ```
+  </Step>
+  <Step title="Use permit for fine-grained control">
+    `params.permit` allows specific keys. Arrays require mapping to an empty array, and hashes to an empty hash.
+
+    ```ruby
+    params.permit(:id, :admin)
+    params.permit(tags: [])
+    params.permit(options: {})
+    ```
+  </Step>
+  <Step title="Encapsulate in a private method">
+    Define a private method to reuse the permitted parameter list across `create` and `update` actions.
+
+    ```ruby
+    private
+      def person_params
+        params.expect(person: [:name, :age])
+      end
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+Use `permit!` (with a `!`) with extreme caution. It marks an entire hash as permitted without checking values, which allows all current and future model attributes to be mass-assigned.
+</Warning>
+
+### Nested parameters
+
+Use `expect` or `permit` on nested parameters, including arrays of hashes:
+
+```ruby
+params.expect(
+  :name,
+  emails: [],
+  friends: [[
+    :name,
+    family: [:name],
+    hobbies: []
+  ]]
+)
+```
+
+## Controller callbacks
+
+Callbacks are methods that run automatically before and/or after a controller action.
+
+### `before_action`
+
+A common use case is ensuring a user is logged in before any action runs:
+
+```ruby
+class ApplicationController < ActionController::Base
+  before_action :require_login
+
+  private
+    def require_login
+      unless logged_in?
+        flash[:error] = "You must be logged in to access this section"
+        redirect_to new_login_url
+      end
+    end
+end
+```
+
+Use `skip_before_action` to skip the callback for specific actions:
+
+```ruby
+class LoginsController < ApplicationController
+  skip_before_action :require_login, only: [:new, :create]
+end
+```
+
+### `after_action` and `around_action`
+
+`after_action` runs after a successful controller action and has access to the response data. `around_action` wraps both the action and the rendering:
+
+```ruby
+class ApplicationController < ActionController::Base
+  around_action :measure_execution_time
+
+  private
+    def measure_execution_time
+      start_time = Time.now
+      yield  # executes the action
+      end_time = Time.now
+
+      duration = end_time - start_time
+      Rails.logger.info "Action #{action_name} from controller #{controller_name} took #{duration.round(2)} seconds to execute."
+    end
+end
+```
+
+<Note>
+`after_action` callbacks are not executed if an exception is raised in the request cycle. `around_action` callbacks, however, run code after `yield` even when there is an exception.
+</Note>
+
+## Sessions
+
+Session data is stored server-side and is typically tied to the user's session. It is available in controllers and views.
+
+```ruby
+class SessionsController < ApplicationController
+  def create
+    if user = User.authenticate_by(email: params[:email], password: params[:password])
+      session[:current_user_id] = user.id
+      redirect_to root_url
+    end
+  end
+
+  def destroy
+    session.delete(:current_user_id)
+    @current_user = nil
+    redirect_to root_url, status: :see_other
+  end
+end
+```
+
+<Tabs>
+  <Tab title="CookieStore">
+    The default and recommended session store. Stores all session data in the cookie itself. Limited to 4 kB but requires no additional setup.
+
+    ```ruby
+    # config/initializers/session_store.rb
+    Rails.application.config.session_store :cookie_store, key: "_your_app_session"
+    ```
+  </Tab>
+  <Tab title="CacheStore">
+    Stores sessions using the configured Rails cache. Suitable when sessions don't contain critical data or don't need to persist for long periods.
+
+    ```ruby
+    Rails.application.config.session_store :cache_store
+    ```
+  </Tab>
+  <Tab title="ActiveRecordStore">
+    Stores session data in a database table using Active Record. Requires the `activerecord-session_store` gem.
+  </Tab>
+</Tabs>
+
+## Cookies
+
+Rails provides access to cookies via the `cookies` method:
+
+```ruby
+class CommentsController < ApplicationController
+  def new
+    @comment = Comment.new(author: cookies[:commenter_name])
+  end
+
+  def create
+    @comment = Comment.new(comment_params)
+    if @comment.save
+      cookies[:commenter_name] = @comment.author if params[:remember_name]
+      redirect_to @comment.article
+    else
+      render action: "new"
+    end
+  end
+end
+```
+
+For sensitive data, use signed or encrypted cookie jars:
+
+```ruby
+cookies.signed[:user_id] = current_user.id
+cookies.encrypted[:expiration_date] = Date.tomorrow
+```
+
+## Flash messages
+
+The flash provides a way to pass temporary data between controller actions. Flash values are available to the very next action and then cleared.
+
+```ruby
+class SessionsController < ApplicationController
+  def destroy
+    session.delete(:current_user_id)
+    flash[:notice] = "You have successfully logged out."
+    redirect_to root_url, status: :see_other
+  end
+end
+```
+
+You can also set the flash directly in `redirect_to`:
+
+```ruby
+redirect_to root_url, notice: "You have successfully logged out."
+redirect_to root_url, alert: "There was an issue."
+```
+
+Display flash messages in a layout so all views show them automatically:
+
+```erb
+<% flash.each do |name, msg| -%>
+  <%= content_tag :div, msg, class: name %>
+<% end -%>
+```
+
+Use `flash.now` when rendering a template directly (not redirecting) so the message is available in the current request:
+
+```ruby
+def create
+  @client = Client.new(client_params)
+  if @client.save
+    # ...
+  else
+    flash.now[:error] = "Could not save client"
+    render action: "new"
+  end
+end
+```
+
+Use `flash.keep` to carry flash values through multiple redirects:
+
+```ruby
+def index
+  flash.keep
+  redirect_to users_url
+end
+```
+
+## Responding to different formats
+
+Use `respond_to` to return different content types from the same action:
+
+```ruby
+def show
+  @photo = Photo.find(params[:id])
+
+  respond_to do |format|
+    format.html # renders show.html.erb
+    format.json { render json: @photo }
+    format.xml  { render xml: @photo }
+  end
+end
+```
+
+### Request variants
+
+Tailor a response based on request context (e.g. mobile vs. desktop) using `request.variant`:
+
+```ruby
+# Set in a before_action
+request.variant = :tablet if request.user_agent.include?("iPad")
+
+# Respond in the action
+respond_to do |format|
+  format.html do |html|
+    html.tablet  # renders show.html+tablet.erb
+    html.phone { extra_setup; render }
+  end
+end
+```
+
+## The request and response objects
+
+Every controller has access to `request` (an `ActionDispatch::Request` instance) and `response` (an `ActionDispatch::Response` instance).
+
+Useful `request` properties:
+
+| Property | Purpose |
+|----------|---------|
+| `host` | The hostname used for this request |
+| `method` | The HTTP method used |
+| `format` | The content type requested by the client |
+| `remote_ip` | The IP address of the client |
+| `url` | The entire URL used for the request |
+| `headers` | A hash containing the request headers |
+
+Set custom response headers via `response.headers`:
+
+```ruby
+response.headers["X-Custom-Header"] = "some value"
+```

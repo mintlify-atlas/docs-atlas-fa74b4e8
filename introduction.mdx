@@ -1,0 +1,87 @@
+---
+title: "Introduction"
+description: "An overview of Ruby on Rails, its philosophy, and the components that make up the framework."
+---
+
+Ruby on Rails is a web application framework that includes everything needed to create database-backed web applications according to the Model-View-Controller (MVC) pattern. Rails is written in the Ruby programming language and is designed to make programming web applications easier by making assumptions about what every developer needs to get started.
+
+## Philosophy
+
+Rails is opinionated software. It makes the assumption that there is a "best" way to do things, and it is designed to encourage that way — and in some cases to discourage alternatives. If you learn "The Rails Way" you will likely discover a significant increase in productivity.
+
+The Rails philosophy rests on two major guiding principles:
+
+**Don't Repeat Yourself (DRY)**
+
+Every piece of knowledge must have a single, unambiguous, authoritative representation within a system. By not writing the same information over and over again, code becomes more maintainable, more extensible, and less buggy.
+
+**Convention Over Configuration**
+
+Rails has opinions about the best way to do many things in a web application and defaults to this set of conventions, rather than requiring you to define everything yourself through endless configuration files.
+
+<Note>
+  Experienced Rails developers report that following these two principles makes web application development significantly more productive and enjoyable.
+</Note>
+
+## The MVC Pattern
+
+Rails divides every application into three layers, each with a specific responsibility:
+
+- **Model** — Represents the domain model and encapsulates business logic. Database-backed model classes are derived from `ActiveRecord::Base`.
+- **View** — Composed of templates responsible for providing appropriate representations of your application's resources, typically HTML with embedded Ruby (ERB).
+- **Controller** — Handles incoming HTTP requests and provides a suitable response by loading models and rendering view templates.
+
+## Framework Components
+
+Rails ships as a collection of focused frameworks, each independently usable or combined as a full stack.
+
+<CardGroup cols={2}>
+  <Card title="Active Record" icon="database">
+    Object-relational mapping (ORM) that connects classes to relational database tables. Provides a base class that sets up a mapping between models and database tables, with support for associations, validations, and callbacks.
+  </Card>
+  <Card title="Action Pack" icon="server">
+    Handles and responds to web requests. Bundles Action Controller (the controller layer) and Action Dispatch (request routing and parsing) into a single framework.
+  </Card>
+  <Card title="Action View" icon="eye">
+    Handles view template lookup and rendering. Supports ERB (Embedded Ruby) templates and provides helpers for building HTML forms, Atom feeds, and more.
+  </Card>
+  <Card title="Active Model" icon="shapes">
+    Provides a known set of interfaces for usage in model classes. Allows Action Pack helpers to interact with non-Active Record models and helps build custom ORMs.
+  </Card>
+  <Card title="Active Job" icon="clock">
+    A framework for declaring jobs and making them run on a variety of queuing backends. Powers Action Mailer's `deliver_later` functionality and any background work that can be run in parallel.
+  </Card>
+  <Card title="Action Mailer" icon="envelope">
+    A framework for designing email service layers. Built as a wrapper around Action Controller and the Mail gem, it provides a way to make emails using templates the same way controllers render views.
+  </Card>
+  <Card title="Action Cable" icon="bolt">
+    Seamlessly integrates WebSockets with the rest of your Rails application. Provides both a client-side JavaScript framework and a server-side Ruby framework for real-time features.
+  </Card>
+  <Card title="Active Storage" icon="cloud">
+    Makes it simple to upload and reference files in cloud services like Amazon S3 or Google Cloud Storage and attach those files to Active Record models. Supports image transformation via MiniMagick or Vips.
+  </Card>
+  <Card title="Action Text" icon="pen-nib">
+    Brings rich text content and editing to Rails. Includes the Trix editor and saves rich text content in its own `RichText` model associated with any existing Active Record model.
+  </Card>
+  <Card title="Action Mailbox" icon="inbox">
+    Routes incoming emails to controller-like mailboxes for processing. Ships with ingresses for Mailgun, Mandrill, Postmark, and SendGrid, as well as built-in Exim, Postfix, and Qmail ingresses.
+  </Card>
+  <Card title="Active Support" icon="toolbox">
+    A collection of utility classes and standard library extensions used throughout Rails. Can be loaded as needed in Ruby projects outside of Rails.
+  </Card>
+  <Card title="Railties" icon="puzzle-piece">
+    Glues all the frameworks together. Handles the bootstrapping process for a Rails application, manages the `rails` command line interface, and provides the Rails generators core.
+  </Card>
+</CardGroup>
+
+<Note>
+  Active Record, Active Model, Action Pack, and Action View can each be used independently outside of a full Rails application.
+</Note>
+
+## Independent Use
+
+Each component has its own gem and can be used in isolation. For example, you can use Active Record as a standalone ORM in a non-Rails Ruby project, or Active Support for its utility extensions without any of the other Rails components.
+
+## License
+
+Ruby on Rails is released under the [MIT License](https://opensource.org/licenses/MIT).

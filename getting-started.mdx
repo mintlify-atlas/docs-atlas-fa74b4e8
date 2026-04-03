@@ -1,0 +1,287 @@
+---
+title: "Getting started"
+description: "Install Ruby on Rails, create your first application, and walk through the directory structure and core workflow."
+---
+
+This guide covers getting up and running with Ruby on Rails. After following it, you will know how to install Rails, create a new Rails application, connect to a database, understand the project layout, and generate your first resource.
+
+## Prerequisites
+
+<Info>
+  Rails is built on top of Ruby. Make sure you are comfortable with basic Ruby syntax before diving into Rails — the [official Ruby documentation](https://www.ruby-lang.org/en/documentation/) is a good starting point.
+</Info>
+
+For a Rails 8.2 application, you need:
+
+- **Ruby** 3.3 or newer
+- **Rails** 8.2.0 or newer
+- A code editor
+
+You can verify the Rails version installed on your system by running:
+
+```bash
+$ rails --version
+Rails 8.2.0
+```
+
+The version shown should be 8.2.0 or higher.
+
+## Installation and setup
+
+<Steps>
+  <Step title="Install Rails">
+    Rails is distributed as a RubyGem. Install it from the command line:
+
+    ```bash
+    $ gem install rails
+    ```
+
+    This installs the `rails` command and all of its dependencies.
+  </Step>
+
+  <Step title="Create a new application">
+    Use `rails new` to generate the foundation of a fresh Rails application. The following example creates an application named `store`:
+
+    ```bash
+    $ rails new store
+    ```
+
+    <Tip>
+      You can customize the generated application with flags. Run `rails new --help` to see all available options.
+    </Tip>
+
+    Rails generates the full directory structure, installs gems via Bundler, and sets up the default configuration.
+  </Step>
+
+  <Step title="Navigate to the application directory">
+    Switch into the newly created application directory:
+
+    ```bash
+    $ cd store
+    ```
+
+    All subsequent commands in this guide should be run from within this directory.
+  </Step>
+
+  <Step title="Create the database">
+    Before starting the server, create the application database:
+
+    ```bash
+    $ bin/rails db:create
+    ```
+
+    Rails uses SQLite by default. The database files are stored in the `storage/` directory.
+
+    <Note>
+      Inside an application directory, always use `bin/rails` rather than the bare `rails` command. This ensures the application's own version of Rails is used.
+    </Note>
+  </Step>
+
+  <Step title="Start the server">
+    Start the built-in Puma web server:
+
+    ```bash
+    $ bin/rails server
+    ```
+
+    Rails will print output similar to:
+
+    ```bash
+    => Booting Puma
+    => Rails 8.2.0 application starting in development
+    => Run `bin/rails server --help` for more startup options
+    Puma starting in single mode...
+    * Puma version: 6.4.3 (ruby 3.3.5-p100) ("The Eagle of Durango")
+    *  Min threads: 3
+    *  Max threads: 3
+    *  Environment: development
+    * Listening on http://127.0.0.1:3000
+    * Listening on http://[::1]:3000
+    Use Ctrl-C to stop
+    ```
+
+    Open [http://localhost:3000](http://localhost:3000) in your browser. You will see the default Rails welcome page confirming that everything is working.
+
+    To stop the server, press `Ctrl-C` in your terminal.
+  </Step>
+</Steps>
+
+## Application directory structure
+
+A new Rails application contains the following directories and files:
+
+| File/Folder | Purpose |
+|---|---|
+| `app/` | Contains the controllers, models, views, helpers, mailers, jobs, and assets for your application. This is where the majority of your code lives. |
+| `bin/` | Contains the `rails` script that starts your app and other scripts for setup, update, deployment, or running your application. |
+| `config/` | Configuration for your application's routes, database, and more. |
+| `config.ru` | Rack configuration for Rack-based servers used to start the application. |
+| `db/` | Contains your current database schema and database migrations. |
+| `Dockerfile` | Configuration file for Docker. |
+| `Gemfile` / `Gemfile.lock` | Specify gem dependencies for your application. Used by Bundler. |
+| `lib/` | Extended modules for your application. |
+| `log/` | Application log files. |
+| `public/` | Static files and compiled assets exposed directly by the server. |
+| `Rakefile` | Locates and loads tasks that can be run from the command line. |
+| `README.md` | A brief instruction manual for your application. |
+| `script/` | One-off or general purpose scripts and benchmarks. |
+| `storage/` | SQLite databases and Active Storage files for the Disk Service. |
+| `test/` | Unit tests, fixtures, and other test apparatus. |
+| `tmp/` | Temporary files such as cache and pid files. |
+| `vendor/` | Third-party code, including vendored gems. |
+
+<Tip>
+  You will spend most of your time working inside `app/`, `config/`, and `db/`. The other directories are mostly managed by Rails or Bundler automatically.
+</Tip>
+
+## Autoloading in development
+
+Rails applications rarely use explicit `require` statements. Rails uses naming conventions to load files automatically, so you can focus on writing application code. When the server is running, new files or changes to existing files are detected and automatically loaded or reloaded — no server restart is needed during development.
+
+## Creating your first resource
+
+Rails includes a generator that scaffolds a complete resource: model, migration, controller, and views. The following example creates a `Product` model with a `name` attribute:
+
+### Generate the model
+
+```bash
+$ bin/rails generate model Product name:string
+```
+
+This creates:
+
+- A migration at `db/migrate/<timestamp>_create_products.rb`
+- An Active Record model at `app/models/product.rb`
+- Test files and fixtures
+
+The generated migration looks like this:
+
+```ruby
+# db/migrate/<timestamp>_create_products.rb
+class CreateProducts < ActiveRecord::Migration[8.2]
+  def change
+    create_table :products do |t|
+      t.string :name
+
+      t.timestamps
+    end
+  end
+end
+```
+
+`t.timestamps` adds `created_at` and `updated_at` columns automatically. These are set by Active Record whenever a record is created or updated.
+
+<Note>
+  Model names are singular (`Product`) because an instantiated model represents a single record. Rails pluralizes the name for the database table (`products`).
+</Note>
+
+### Run the migration
+
+Apply the migration to update the database schema:
+
+```bash
+$ bin/rails db:migrate
+```
+
+Output:
+
+```bash
+== 20240426151900 CreateProducts: migrating ===================================
+-- create_table(:products)
+   -> 0.0030s
+== 20240426151900 CreateProducts: migrated (0.0031s) ==========================
+```
+
+<Tip>
+  If you make a mistake, run `bin/rails db:rollback` to undo the last migration.
+</Tip>
+
+### Generate the controller
+
+Generate a `ProductsController` with an `index` action:
+
+```bash
+$ bin/rails generate controller Products index --skip-routes
+```
+
+This creates the controller, a views folder, view templates, a test file, and a helper file.
+
+### Define routes
+
+Open `config/routes.rb` and add a resourceful route for products:
+
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  root "products#index"
+  resources :products
+end
+```
+
+`resources :products` generates all eight standard CRUD routes in a single line. Run `bin/rails routes` to see them:
+
+```
+      Prefix Verb   URI Pattern                  Controller#Action
+    products GET    /products(.:format)          products#index
+             POST   /products(.:format)          products#create
+ new_product GET    /products/new(.:format)      products#new
+edit_product GET    /products/:id/edit(.:format) products#edit
+     product GET    /products/:id(.:format)      products#show
+             PATCH  /products/:id(.:format)      products#update
+             PUT    /products/:id(.:format)      products#update
+             DELETE /products/:id(.:format)      products#destroy
+```
+
+### Use the Rails console
+
+The Rails console is an interactive tool for testing code against your application. Start it with:
+
+```bash
+$ bin/rails console
+```
+
+You will see a prompt:
+
+```
+Loading development environment (Rails 8.2.0)
+store(dev)>
+```
+
+From here you can create, query, update, and delete records:
+
+```ruby
+# Create a record
+store(dev)> Product.create(name: "T-Shirt")
+
+# Query all records
+store(dev)> Product.all
+
+# Find a record by ID
+store(dev)> Product.find(1)
+
+# Update a record
+store(dev)> product = Product.find(1)
+store(dev)> product.update(name: "Shoes")
+
+# Delete a record
+store(dev)> product.destroy
+```
+
+Type `exit` to leave the console.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="MVC Architecture" icon="diagram-project" href="/mvc-architecture">
+    Understand how models, views, and controllers work together in Rails.
+  </Card>
+  <Card title="Routing" icon="route" href="/core-concepts/routing">
+    Declare RESTful routes, nested resources, and URL helpers.
+  </Card>
+  <Card title="Active Record" icon="database" href="/active-record/basics">
+    Learn how Rails maps Ruby objects to database tables for CRUD operations.
+  </Card>
+  <Card title="Validations" icon="circle-check" href="/active-record/validations">
+    Ensure data integrity with built-in and custom validation rules.
+  </Card>
+</CardGroup>
